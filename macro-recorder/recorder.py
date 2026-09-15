@@ -17,13 +17,20 @@ class MacroRecorder:
         self._mouse_listener = None
         self._lock = Lock()
         self._pressed_keys: set[str] = set()
+        self._last_move_time = 0.0
+        self._last_move_pos: tuple[int, int] | None = None
+        self.move_interval = 0.03
+        self.move_distance = 3
 
     def start(self):
         self.stop()
         with self._lock:
             self.events.clear()
             self.recording = True
-            self._last_time = time.perf_counter()
+            now = time.perf_counter()
+            self._last_time = now
+            self._last_move_time = now
+            self._last_move_pos = None
 
         self._keyboard_listener = keyboard.Listener(
             on_press=self._on_key_press,
@@ -39,15 +46,21 @@ class MacroRecorder:
 
     def stop(self):
         with self._lock:
+            was_recording = self.recording
             self.recording = False
-        for listener in (self._keyboard_listener, self._mouse_listener):
-            if listener:
-                listener.stop()
+            self._pressed_keys.clear()
+            self._last_move_pos = None
+
+        listeners = (self._keyboard_listener, self._mouse_listener)
         self._keyboard_listener = None
         self._mouse_listener = None
-        self._pressed_keys.clear()
+        for listener in listeners:
+            if listener:
+                listener.stop()
 
     def _add(self, event_type: str, data: dict):
+        callback = None
+        event = None
         with self._lock:
             if not self.recording:
                 return
@@ -56,8 +69,9 @@ class MacroRecorder:
             self._last_time = now
             event = MacroEvent(event_type, delay, data)
             self.events.append(event)
-        if self.on_event:
-            self.on_event(event)
+            callback = self.on_event
+        if callback:
+            callback(event)
 
     @staticmethod
     def _key_name(key) -> str:
@@ -67,17 +81,33 @@ class MacroRecorder:
 
     def _on_key_press(self, key):
         name = self._key_name(key)
-        if name in self._pressed_keys:
-            return
-        self._pressed_keys.add(name)
+        with self._lock:
+            if not self.recording or name in self._pressed_keys:
+                return
+            self._pressed_keys.add(name)
         self._add("key_down", {"key": name})
 
     def _on_key_release(self, key):
         name = self._key_name(key)
-        self._pressed_keys.discard(name)
+        with self._lock:
+            if not self.recording:
+                return
+            self._pressed_keys.discard(name)
         self._add("key_up", {"key": name})
 
     def _on_move(self, x, y):
+        now = time.perf_counter()
+        with self._lock:
+            if not self.recording:
+                return
+            last_pos = self._last_move_pos
+            if last_pos is not None:
+                dx = x - last_pos[0]
+                dy = y - last_pos[1]
+                if now - self._last_move_time < self.move_interval and dx * dx + dy * dy < self.move_distance * self.move_distance:
+                    return
+            self._last_move_time = now
+            self._last_move_pos = (x, y)
         self._add("mouse_move", {"x": x, "y": y})
 
     def _on_click(self, x, y, button, pressed):
