@@ -18,10 +18,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.model import load_macro, save_macro
+from core.model import MacroEvent, load_macro, save_macro
 from core.player import MacroPlayer
 from recording.recorder import MacroRecorder
 from services.hotkeys import HotkeyService
+from ui.event_editor import EventEditorDialog
 from ui.settings_dialog import SettingsDialog
 
 
@@ -172,9 +173,28 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         layout.addWidget(self.progress)
+
+        editor_bar = QHBoxLayout()
+        self.edit_button = QPushButton("编辑延迟")
+        self.duplicate_button = QPushButton("复制")
+        self.up_button = QPushButton("上移")
+        self.down_button = QPushButton("下移")
+        self.delete_button = QPushButton("删除")
+        self.edit_button.clicked.connect(self.edit_selected_event)
+        self.duplicate_button.clicked.connect(self.duplicate_selected_event)
+        self.up_button.clicked.connect(lambda: self.move_selected_event(-1))
+        self.down_button.clicked.connect(lambda: self.move_selected_event(1))
+        self.delete_button.clicked.connect(self.delete_selected_event)
+        for widget in (self.edit_button, self.duplicate_button, self.up_button, self.down_button, self.delete_button):
+            editor_bar.addWidget(widget)
+        editor_bar.addStretch()
+        layout.addLayout(editor_bar)
+
         self.list = QListWidget()
         self.list.setObjectName("eventList")
         self.list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.list.itemSelectionChanged.connect(self._refresh)
+        self.list.itemDoubleClicked.connect(lambda _: self.edit_selected_event())
         layout.addWidget(self.list, 1)
 
         bottom = QHBoxLayout()
@@ -389,6 +409,66 @@ class MainWindow(QMainWindow):
         self.status.setText("已清空")
         self._refresh()
 
+    def _selected_index(self):
+        item = self.list.currentItem()
+        return self.list.row(item) if item is not None else -1
+
+    def _refresh_list(self, selected_index: int = -1):
+        self.list.clear()
+        for event in self.events:
+            self.list.addItem(self.format_event(event))
+        if 0 <= selected_index < self.list.count():
+            self.list.setCurrentRow(selected_index)
+
+    def edit_selected_event(self):
+        if self.recorder.recording or self.player.running:
+            return
+        index = self._selected_index()
+        if index < 0:
+            return
+        dialog = EventEditorDialog(self.events[index], self)
+        if dialog.exec():
+            self._refresh_list(index)
+            self.status.setText(f"已修改第 {index + 1} 个操作")
+            self._refresh()
+
+    def duplicate_selected_event(self):
+        if self.recorder.recording or self.player.running:
+            return
+        index = self._selected_index()
+        if index < 0:
+            return
+        event = self.events[index]
+        copied = MacroEvent(event.type, event.delay, dict(event.data))
+        self.events.insert(index + 1, copied)
+        self._refresh_list(index + 1)
+        self.status.setText(f"已复制第 {index + 1} 个操作")
+        self._refresh()
+
+    def move_selected_event(self, offset: int):
+        if self.recorder.recording or self.player.running:
+            return
+        index = self._selected_index()
+        target = index + offset
+        if index < 0 or target < 0 or target >= len(self.events):
+            return
+        self.events[index], self.events[target] = self.events[target], self.events[index]
+        self._refresh_list(target)
+        self.status.setText(f"已移动到第 {target + 1} 个操作")
+        self._refresh()
+
+    def delete_selected_event(self):
+        if self.recorder.recording or self.player.running:
+            return
+        index = self._selected_index()
+        if index < 0:
+            return
+        self.events.pop(index)
+        selected = min(index, len(self.events) - 1)
+        self._refresh_list(selected)
+        self.status.setText(f"已删除第 {index + 1} 个操作")
+        self._refresh()
+
     @staticmethod
     def format_event(event):
         data = event.data
@@ -414,7 +494,21 @@ class MainWindow(QMainWindow):
         self.pause_btn.setEnabled(playing)
         self.stop_btn.setEnabled(recording or playing or self._pending)
         self.clear_btn.setEnabled(not recording and not playing and not self._pending)
+        editing_enabled = not recording and not playing and not self._pending and bool(self.events)
+        selected = self._selected_index()
+        self.edit_button.setEnabled(editing_enabled and selected >= 0)
+        self.duplicate_button.setEnabled(editing_enabled and selected >= 0)
+        self.up_button.setEnabled(editing_enabled and selected > 0)
+        self.down_button.setEnabled(editing_enabled and 0 <= selected < len(self.events) - 1)
+        self.delete_button.setEnabled(editing_enabled and selected >= 0)
         self.hotkey_label.setText(
             f"录制：{self.record_hotkey}  |  结束录制：{self.stop_hotkey}  |  "
             f"播放/暂停：{self.play_pause_hotkey}  |  结束播放：{self.stop_playback_hotkey}"
         )
+
+    def closeEvent(self, event):
+        self._pending = False
+        self._remove_hotkeys()
+        self.recorder.stop()
+        self.player.stop()
+        event.accept()
