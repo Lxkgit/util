@@ -31,6 +31,7 @@ class SettingsDialog(QDialog):
         root.setContentsMargins(0, 0, 0, 0)
 
         self.menu = QListWidget()
+        self.menu.setObjectName("settingsMenu")
         self.menu.setFixedWidth(160)
         self.menu.addItems(["快捷键", "录制", "播放"])
         root.addWidget(self.menu)
@@ -40,7 +41,7 @@ class SettingsDialog(QDialog):
         root.addLayout(right, 1)
 
         title = QLabel("设置")
-        title.setStyleSheet("font-size:24px;font-weight:700;")
+        title.setStyleSheet("font-size:24px;font-weight:700;color:#303133;")
         right.addWidget(title)
 
         self.pages = QStackedWidget()
@@ -62,10 +63,14 @@ class SettingsDialog(QDialog):
 
         self.setStyleSheet(
             "QDialog{background:#f5f7fa;}"
-            "QListWidget{background:#eef2f7;border:0;padding:12px 8px;}"
-            "QListWidget::item{min-height:42px;padding:0 14px;border-radius:7px;}"
-            "QListWidget::item:selected{background:white;font-weight:600;}"
+            "QListWidget#settingsMenu{background:#eef2f7;border:0;padding:12px 8px;color:#303133;}"
+            "QListWidget#settingsMenu::item{min-height:42px;padding:0 14px;border-radius:7px;color:#303133;}"
+            "QListWidget#settingsMenu::item:hover{background:#e5ebf3;color:#303133;}"
+            "QListWidget#settingsMenu::item:selected{background:#ffffff;color:#303133;font-weight:600;}"
+            "QListWidget#settingsMenu::item:selected:active{background:#ffffff;color:#303133;}"
+            "QListWidget#settingsMenu::item:selected:!active{background:#ffffff;color:#303133;}"
             "QFrame#card{background:white;border:1px solid #e4e7ed;border-radius:10px;}"
+            "QLabel{color:#303133;}"
             "QKeySequenceEdit{min-height:34px;border:1px solid #dcdfe6;border-radius:6px;}"
             "QDialogButtonBox QPushButton{min-width:80px;min-height:34px;}"
         )
@@ -77,7 +82,7 @@ class SettingsDialog(QDialog):
         box.setContentsMargins(18, 16, 18, 16)
 
         label = QLabel(title)
-        label.setStyleSheet("font-size:16px;font-weight:600;")
+        label.setStyleSheet("font-size:16px;font-weight:600;color:#303133;")
         box.addWidget(label)
 
         text = QLabel(tip)
