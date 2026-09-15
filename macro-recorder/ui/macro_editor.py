@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QPainter, QPen
+from PySide6.QtGui import QCursor, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -29,6 +29,7 @@ class PointPicker(QDialog):
         super().__init__(parent)
         self.point: tuple[int, int] | None = None
         self._selected: tuple[int, int] | None = None
+        self._mouse_pos = QCursor.pos()
         self._screen_geometry = QGuiApplication.primaryScreen().geometry() if QGuiApplication.primaryScreen() else QRect(0, 0, 1920, 1080)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -44,7 +45,6 @@ class PointPicker(QDialog):
 
     def _build_ui(self):
         self.info = QLabel(self)
-        self.info.setText("移动鼠标选择位置 · 左键选择 · Enter 确认 · Esc 取消")
         self.info.setStyleSheet(
             "QLabel{background:rgba(20,24,32,225);color:white;padding:10px 16px;"
             "border-radius:8px;font-size:15px;font-weight:600;}"
@@ -77,35 +77,39 @@ class PointPicker(QDialog):
         self._selected = None
         self.point = None
         self.confirm.setEnabled(False)
-        self._update_position_text(self.mapFromGlobal(QGuiApplication.primaryScreen().availableGeometry().center()))
+        self._mouse_pos = QCursor.pos()
+        self._update_position_text(self._mouse_pos)
+        self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(QPen(Qt.GlobalColor.red, 2))
-        pos = self.mapFromGlobal(QGuiApplication.cursor().pos())
+        pos = self.mapFromGlobal(self._mouse_pos)
         painter.drawLine(pos.x() - 16, pos.y(), pos.x() + 16, pos.y())
         painter.drawLine(pos.x(), pos.y() - 16, pos.x(), pos.y() + 16)
         painter.setPen(QPen(Qt.GlobalColor.white, 1))
         painter.drawEllipse(pos.x() - 4, pos.y() - 4, 8, 8)
         if self._selected:
             x, y = self._selected
-            selected = self.mapFromGlobal(QGuiApplication.cursor().pos())
+            selected = self.mapFromGlobal(QPoint(x, y))
             painter.setPen(QPen(Qt.GlobalColor.green, 2))
             painter.drawEllipse(selected.x() - 7, selected.y() - 7, 14, 14)
             painter.drawText(selected.x() + 12, selected.y() - 12, f"({x}, {y})")
         painter.end()
 
     def mouseMoveEvent(self, event):
-        pos = event.globalPosition().toPoint()
-        self._update_position_text(pos)
+        self._mouse_pos = event.globalPosition().toPoint()
+        self._update_position_text(self._mouse_pos)
         self.update()
-        super().mouseMoveEvent(event)
+        event.accept()
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
+            event.accept()
             return
         pos = event.globalPosition().toPoint()
+        self._mouse_pos = pos
         self._selected = (pos.x(), pos.y())
         self._update_position_text(pos, selected=True)
         self.confirm.setEnabled(True)
@@ -260,14 +264,9 @@ class ScreenPreviewOverlay(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
         panel = self.rect().adjusted(24, 24, -24, -24)
         panel.setHeight(128)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(Qt.GlobalColor.transparent)
-        painter.drawRoundedRect(panel, 12, 12)
-
-        painter.setPen(Qt.GlobalColor.white)
         painter.setBrush(Qt.GlobalColor.black)
         painter.setOpacity(0.88)
         painter.drawRoundedRect(panel, 12, 12)
@@ -300,7 +299,6 @@ class ScreenPreviewOverlay(QWidget):
             painter.drawLine(px, py - 18, px, py + 18)
             painter.setPen(QPen(Qt.GlobalColor.white, 2))
             painter.drawEllipse(px - 8, py - 8, 16, 16)
-
         painter.end()
 
 
@@ -336,13 +334,7 @@ class MacroEditorDialog(QDialog):
         root.addLayout(head)
 
         toolbar = QHBoxLayout()
-        for action, text in (
-            ("key", "键盘按键"),
-            ("click", "设置鼠标点击"),
-            ("move", "设置鼠标移动"),
-            ("scroll", "设置滚轮"),
-            ("delay", "添加等待"),
-        ):
+        for action, text in (("key", "键盘按键"), ("click", "设置鼠标点击"), ("move", "设置鼠标移动"), ("scroll", "设置滚轮"), ("delay", "添加等待")):
             button = QPushButton(f"＋ {text}")
             button.clicked.connect(lambda _, value=action: self.insert_action(value))
             toolbar.addWidget(button)
@@ -351,22 +343,12 @@ class MacroEditorDialog(QDialog):
 
         self.list = QListWidget()
         self.list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self.list.setStyleSheet(
-            "QListWidget{background:white;border:1px solid #e4e7ed;border-radius:10px;padding:6px;}"
-            "QListWidget::item{padding:10px 12px;}"
-            "QListWidget::item:selected{background:#eaf2ff;color:#303133;}"
-        )
+        self.list.setStyleSheet("QListWidget{background:white;border:1px solid #e4e7ed;border-radius:10px;padding:6px;}QListWidget::item{padding:10px 12px;}QListWidget::item:selected{background:#eaf2ff;color:#303133;}")
         self.list.itemDoubleClicked.connect(lambda _: self.edit_selected())
         root.addWidget(self.list, 1)
 
         edit_bar = QHBoxLayout()
-        for text, slot in (
-            ("编辑", self.edit_selected),
-            ("复制", self.duplicate_selected),
-            ("上移", lambda: self.move_selected(-1)),
-            ("下移", lambda: self.move_selected(1)),
-            ("删除", self.delete_selected),
-        ):
+        for text, slot in (("编辑", self.edit_selected), ("复制", self.duplicate_selected), ("上移", lambda: self.move_selected(-1)), ("下移", lambda: self.move_selected(1)), ("删除", self.delete_selected)):
             button = QPushButton(text)
             button.clicked.connect(slot)
             edit_bar.addWidget(button)
@@ -384,216 +366,147 @@ class MacroEditorDialog(QDialog):
         bottom.addWidget(cancel)
         bottom.addWidget(save)
         root.addLayout(bottom)
-        self._refresh_list()
+        self._reload_list()
 
-    @staticmethod
-    def format_event(event: MacroEvent) -> str:
-        data = event.data
-        if event.type == "key_down":
-            return f"键盘：按下 {data.get('key')}    延迟 {event.delay:.3f}s"
-        if event.type == "key_up":
-            return f"键盘：释放 {data.get('key')}    延迟 {event.delay:.3f}s"
-        if event.type == "mouse_move":
-            return f"鼠标：移动到 ({data.get('x')}, {data.get('y')})    延迟 {event.delay:.3f}s"
-        if event.type == "mouse_click":
-            state = "按下" if data.get("pressed") else "释放"
-            return f"鼠标：{data.get('button')} {state} @ ({data.get('x')}, {data.get('y')})    延迟 {event.delay:.3f}s"
-        if event.type == "mouse_scroll":
-            return f"鼠标：滚轮 ({data.get('dx')}, {data.get('dy')}) @ ({data.get('x')}, {data.get('y')})    延迟 {event.delay:.3f}s"
-        if event.type == "delay":
-            return f"等待：{event.delay:.3f} 秒"
-        return str(event)
+    def closeEvent(self, event):
+        self.stop_preview()
+        super().closeEvent(event)
 
-    def _refresh_list(self, selected: int = -1):
+    def _reload_list(self, selected: int = -1):
         self.list.clear()
         for index, event in enumerate(self.events):
-            item = QListWidgetItem(f"{index + 1:03d}   {self.format_event(event)}")
-            item.setData(Qt.ItemDataRole.UserRole, index)
+            item = QListWidgetItem(self._event_text(index, event))
             self.list.addItem(item)
         if 0 <= selected < self.list.count():
             self.list.setCurrentRow(selected)
 
-    def _selected_index(self) -> int:
-        item = self.list.currentItem()
-        return int(item.data(Qt.ItemDataRole.UserRole)) if item else -1
+    def _event_text(self, index, event):
+        d = event.data
+        detail = ""
+        if event.type == "key":
+            detail = f"：{d.get('key', '')} {d.get('action', '')}"
+        elif event.type == "mouse_move":
+            detail = f"：({d.get('x')}, {d.get('y')})"
+        elif event.type == "mouse_click":
+            detail = f"：{d.get('button', 'left')} ({d.get('x')}, {d.get('y')}) {'按下' if d.get('pressed') else '释放'}"
+        elif event.type == "mouse_scroll":
+            detail = f"：({d.get('x')}, {d.get('y')}) dx={d.get('dx', 0)} dy={d.get('dy', 0)}"
+        elif event.type == "delay":
+            detail = ""
+        return f"{index + 1:03d}  {event.type}{detail}    延迟 {event.delay:.3f}s"
 
-    def insert_action(self, action: str):
-        if self._preview_running:
-            return
+    def insert_action(self, action):
         if action == "key":
-            from ui.action_dialog import ActionInsertDialog
-            dialog = ActionInsertDialog("key", self)
+            dialog = __import__('ui.action_dialog', fromlist=['ActionDialog']).ActionDialog('key', self)
         elif action == "delay":
-            from ui.action_dialog import ActionInsertDialog
-            dialog = ActionInsertDialog("delay", self)
+            dialog = __import__('ui.action_dialog', fromlist=['ActionDialog']).ActionDialog('delay', self)
         else:
             dialog = MouseActionDialog(action, self)
-        if not dialog.exec() or not dialog.events:
+        if not dialog.exec():
             return
-        index = self._selected_index()
-        insert_at = index + 1 if index >= 0 else len(self.events)
-        self.events[insert_at:insert_at] = dialog.events
-        self._refresh_list(insert_at)
+        row = self.list.currentRow() + 1
+        self.events[row:row] = dialog.events
+        self._reload_list(row)
 
     def edit_selected(self):
-        index = self._selected_index()
-        if index < 0 or self._preview_running:
+        row = self.list.currentRow()
+        if row < 0 or row >= len(self.events):
             return
-        event = self.events[index]
-        if event.type != "delay":
-            QMessageBox.information(self, "提示", "当前版本暂时只支持直接编辑等待时间，鼠标位置请重新设置。")
-            return
+        event = self.events[row]
         dialog = EventEditorDialog(event, self)
         if dialog.exec():
-            self.events[index] = dialog.event
-            self._refresh_list(index)
+            self.events[row] = dialog.event
+            self._reload_list(row)
 
     def duplicate_selected(self):
-        index = self._selected_index()
-        if index < 0 or self._preview_running:
+        row = self.list.currentRow()
+        if row < 0:
             return
-        event = self.events[index]
-        self.events.insert(index + 1, MacroEvent(event.type, event.delay, dict(event.data)))
-        self._refresh_list(index + 1)
+        event = self.events[row]
+        self.events.insert(row + 1, MacroEvent(event.type, event.delay, dict(event.data)))
+        self._reload_list(row + 1)
 
-    def move_selected(self, offset: int):
-        index = self._selected_index()
-        target = index + offset
-        if index < 0 or target < 0 or target >= len(self.events) or self._preview_running:
+    def move_selected(self, direction):
+        row = self.list.currentRow()
+        target = row + direction
+        if row < 0 or target < 0 or target >= len(self.events):
             return
-        self.events[index], self.events[target] = self.events[target], self.events[index]
-        self._refresh_list(target)
+        self.events[row], self.events[target] = self.events[target], self.events[row]
+        self._reload_list(target)
 
     def delete_selected(self):
-        index = self._selected_index()
-        if index < 0 or self._preview_running:
+        row = self.list.currentRow()
+        if row < 0:
             return
-        del self.events[index]
-        self._refresh_list(min(index, len(self.events) - 1))
+        self.events.pop(row)
+        self._reload_list(min(row, len(self.events) - 1))
 
     def toggle_preview(self):
         if self._preview_running:
             self.stop_preview()
             return
         if not self.events:
-            QMessageBox.information(self, "预览", "当前宏没有操作。")
+            QMessageBox.information(self, "预览", "当前宏没有可预览的操作。")
             return
         self._preview_running = True
         self._preview_index = 0
+        self.preview_button.setText("■ 停止预览")
         self._preview_overlay = ScreenPreviewOverlay()
         self._preview_overlay.show()
-        self._preview_overlay.raise_()
-        self.preview_button.setText("■ 停止桌面预览")
-        self.preview_hint.setText("正在桌面上安全预览：只显示模拟动作，不执行任何真实操作。")
         self._preview_tick()
 
     def stop_preview(self):
         self._preview_timer.stop()
         self._preview_running = False
-        if self._preview_overlay is not None:
+        self.preview_button.setText("▶ 桌面预览")
+        if self._preview_overlay:
             self._preview_overlay.close()
             self._preview_overlay.deleteLater()
             self._preview_overlay = None
-        self.preview_button.setText("▶ 桌面预览")
-        self.preview_hint.setText("⚠ 桌面预览只显示虚拟光标和操作提示，不会移动鼠标、点击或发送按键。")
 
     def _preview_tick(self):
-        if not self._preview_running:
-            return
-        if self._preview_index >= len(self.events):
+        if not self._preview_running or self._preview_index >= len(self.events):
             self.stop_preview()
             return
-
         event = self.events[self._preview_index]
-        self.list.setCurrentRow(self._preview_index)
-        delay_ms = max(0, int(event.delay * 1000))
-        if delay_ms > 0:
-            self._preview_timer.start(delay_ms)
-            if self._preview_overlay:
-                self._preview_overlay.set_action(
-                    f"第 {self._preview_index + 1}/{len(self.events)} 步 · 等待",
-                    f"等待 {event.delay:.3f} 秒后模拟：{self._event_summary(event)}",
-                )
-            return
-        self._apply_preview_event(event)
-        self._preview_index += 1
-        QTimer.singleShot(0, self._preview_tick)
+        delay_ms = max(0, int(round(event.delay * 1000)))
+        self._preview_timer.start(delay_ms)
 
     def _preview_timer_tick(self):
         if not self._preview_running or self._preview_index >= len(self.events):
+            self.stop_preview()
             return
-        self._apply_preview_event(self.events[self._preview_index])
+        event = self.events[self._preview_index]
+        self._show_preview_event(event)
         self._preview_index += 1
-        QTimer.singleShot(0, self._preview_tick)
+        if self._preview_index < len(self.events):
+            self._preview_timer.start(450)
+        else:
+            self._preview_timer.start(1000)
 
-    @staticmethod
-    def _event_summary(event: MacroEvent) -> str:
-        data = event.data
-        if event.type == "key_down":
-            return f"按下 {data.get('key')}"
-        if event.type == "key_up":
-            return f"释放 {data.get('key')}"
-        if event.type == "mouse_move":
-            return f"移动到 ({data.get('x')}, {data.get('y')})"
-        if event.type == "mouse_click":
-            state = "按下" if data.get('pressed') else "释放"
-            return f"鼠标 {data.get('button')} 键{state} @ ({data.get('x')}, {data.get('y')})"
-        if event.type == "mouse_scroll":
-            return f"滚轮 ({data.get('dx', 0)}, {data.get('dy', 0)}) @ ({data.get('x')}, {data.get('y')})"
-        if event.type == "delay":
-            return f"等待 {event.delay:.3f} 秒"
-        return event.type
-
-    def _apply_preview_event(self, event: MacroEvent):
-        if self._preview_overlay is None:
+    def _show_preview_event(self, event):
+        if not self._preview_overlay:
             return
-        data = event.data
-        if event.type == "key_down":
-            key = data.get("key")
-            self._preview_overlay.set_action(
-                "⌨ 模拟键盘：按下",
-                f"按键：{key}\n⚠ 不会真的发送 {key}",
-            )
-        elif event.type == "key_up":
-            key = data.get("key")
-            self._preview_overlay.set_action(
-                "⌨ 模拟键盘：释放",
-                f"按键：{key}\n⚠ 不会真的发送 {key}",
-            )
-        elif event.type == "mouse_move":
-            x, y = int(data.get("x", 0)), int(data.get("y", 0))
-            self._preview_overlay.set_action(
-                "🖱 模拟鼠标移动",
-                f"位置：{x}, {y}\n⚠ 不会真的移动鼠标",
-                (x, y),
-            )
+        d = event.data
+        cursor = None
+        if event.type == "mouse_move":
+            cursor = (int(d.get("x", 0)), int(d.get("y", 0)))
+            title = "🖱 模拟鼠标移动"
+            detail = f"位置：{cursor[0]}, {cursor[1]}"
         elif event.type == "mouse_click":
-            x, y = int(data.get("x", 0)), int(data.get("y", 0))
-            button = data.get("button", "left")
-            state = "按下" if data.get("pressed") else "释放"
-            self._preview_overlay.set_action(
-                f"🖱 模拟鼠标{button}键{state}",
-                f"位置：{x}, {y}\n⚠ 不会真的点击",
-                (x, y),
-            )
+            cursor = (int(d.get("x", 0)), int(d.get("y", 0)))
+            action = "按下" if d.get("pressed") else "释放"
+            title = f"🖱 模拟鼠标{d.get('button', 'left')}键{action}"
+            detail = f"位置：{cursor[0]}, {cursor[1]}"
         elif event.type == "mouse_scroll":
-            x, y = int(data.get("x", 0)), int(data.get("y", 0))
-            dx, dy = data.get("dx", 0), data.get("dy", 0)
-            self._preview_overlay.set_action(
-                "🖱 模拟鼠标滚轮",
-                f"位置：{x}, {y}\n水平：{dx} · 垂直：{dy}\n⚠ 不会真的滚动",
-                (x, y),
-            )
-        elif event.type == "delay":
-            self._preview_overlay.set_action(
-                "⏱ 模拟等待",
-                f"等待：{event.delay:.3f} 秒\n⚠ 预览不会执行任何真实操作",
-            )
-
-    def reject(self):
-        self.stop_preview()
-        super().reject()
-
-    def accept(self):
-        self.stop_preview()
-        super().accept()
+            cursor = (int(d.get("x", 0)), int(d.get("y", 0)))
+            title = "🖱 模拟鼠标滚轮"
+            detail = f"位置：{cursor[0]}, {cursor[1]}  水平：{d.get('dx', 0)}  垂直：{d.get('dy', 0)}"
+        elif event.type == "key":
+            key = d.get("key", "")
+            title = f"⌨ 模拟按键：{key}"
+            detail = f"操作：{d.get('action', '')}"
+        else:
+            title = "⏱ 模拟等待"
+            detail = f"等待：{event.delay:.3f} 秒"
+        self._preview_overlay.set_action(title, detail, cursor)
