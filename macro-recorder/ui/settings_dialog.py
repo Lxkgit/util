@@ -104,7 +104,7 @@ class SettingsDialog(QDialog):
         form.addRow("结束录制", self.stop_edit)
         box.addLayout(form)
 
-        tip = QLabel("推荐：F8 控制开始/暂停/继续，Shift+F8 结束录制。")
+        tip = QLabel("默认：F8 控制录制，F9 结束录制。")
         tip.setStyleSheet("color:#777;")
         box.addWidget(tip)
         layout.addWidget(card)
