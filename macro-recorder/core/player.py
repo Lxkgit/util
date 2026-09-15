@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from threading import Event, Thread
+
 from pynput import keyboard, mouse
 
 from core.model import MacroEvent
@@ -21,61 +22,166 @@ class MacroPlayer:
     def play(self, events: list[MacroEvent], repeat: int = 1) -> bool:
         if self.running or not events:
             return False
-        self._stop.clear(); self._pause.clear(); self.running = True; self.paused = False
+
+        self._stop.clear()
+        self._pause.clear()
+        self.running = True
+        self.paused = False
         Thread(target=self._run, args=(list(events), repeat), daemon=True).start()
         return True
 
     def toggle_pause(self):
-        if not self.running: return
+        if not self.running:
+            return
+
         if self._pause.is_set():
-            self._pause.clear(); self.paused = False; self._state("播放中")
+            self._pause.clear()
+            self.paused = False
+            self._state("播放中")
         else:
-            self._pause.set(); self.paused = True; self._state("已暂停")
+            self._pause.set()
+            self.paused = True
+            self._state("已暂停")
 
     def stop(self):
-        self._stop.set(); self._pause.clear()
+        self._stop.set()
+        self._pause.clear()
 
     def _run(self, events, repeat):
         try:
             total = len(events) * repeat if repeat > 0 else 0
-            completed = 0; cycle = 0
+            completed = 0
+            cycle = 0
+
             while not self._stop.is_set() and (repeat <= 0 or cycle < repeat):
                 for event in events:
-                    if self._wait(event.delay): return
-                    self._execute(event); completed += 1
-                    if self.on_progress and total: self.on_progress(completed, total)
+                    if self._wait(event.delay):
+                        return
+                    self._execute(event)
+                    completed += 1
+                    if self.on_progress and total:
+                        self.on_progress(completed, total)
                 cycle += 1
-            if self.on_progress: self.on_progress(total if total else completed, total)
+
+            if self.on_progress:
+                self.on_progress(total if total else completed, total)
+        except Exception as exc:
+            self._state(f"播放异常：{exc}")
         finally:
-            self.running = False; self.paused = False; self._state("已停止")
+            self.running = False
+            self.paused = False
+            if not self._stop.is_set():
+                self._state("播放完成")
+            else:
+                self._state("已停止")
 
     def _wait(self, seconds: float) -> bool:
         end = time.perf_counter() + seconds
         while time.perf_counter() < end:
-            if self._stop.is_set(): return True
-            while self._pause.is_set() and not self._stop.is_set(): time.sleep(0.05); end += 0.05
+            if self._stop.is_set():
+                return True
+
+            while self._pause.is_set() and not self._stop.is_set():
+                time.sleep(0.05)
+                end += 0.05
+
             time.sleep(min(0.005, max(0, end - time.perf_counter())))
+
         return False
 
     def _execute(self, event: MacroEvent):
         data = event.data
-        if event.type == "key_down": self.keyboard.press(self._key(data["key"]))
-        elif event.type == "key_up": self.keyboard.release(self._key(data["key"]))
-        elif event.type == "mouse_move": self.mouse.position = (int(data["x"]), int(data["y"]))
+
+        if event.type == "key_down":
+            self.keyboard.press(self._key(data["key"]))
+        elif event.type == "key_up":
+            self.keyboard.release(self._key(data["key"]))
+        elif event.type == "mouse_move":
+            self.mouse.position = (int(data["x"]), int(data["y"]))
         elif event.type == "mouse_click":
             self.mouse.position = (int(data["x"]), int(data["y"]))
             button = getattr(mouse.Button, data["button"])
-            self.mouse.press(button) if data["pressed"] else self.mouse.release(button)
+            if data["pressed"]:
+                self.mouse.press(button)
+            else:
+                self.mouse.release(button)
         elif event.type == "mouse_scroll":
             self.mouse.position = (int(data["x"]), int(data["y"]))
             self.mouse.scroll(int(data["dx"]), int(data["dy"]))
 
     @staticmethod
     def _key(name: str):
-        special = {"ctrl":"ctrl","ctrl_l":"ctrl_l","ctrl_r":"ctrl_r","shift":"shift","shift_l":"shift_l","shift_r":"shift_r","alt":"alt","alt_l":"alt_l","alt_r":"alt_r","cmd":"cmd","cmd_l":"cmd_l","cmd_r":"cmd_r","enter":"enter","esc":"esc","tab":"tab","backspace":"backspace","space":"space","delete":"delete","insert":"insert","home":"home","end":"end","page_up":"page_up","page_down":"page_down","up":"up","down":"down","left":"left","right":"right","pause":"pause","print_screen":"print_screen","menu":"menu","caps_lock":"caps_lock","num_lock":"num_lock","scroll_lock":"scroll_lock"}
-        for i in range(1, 13): special[f"f{i}"] = f"f{i}"
-        if name.lower() in special: return getattr(keyboard.Key, special[name.lower()])
-        return keyboard.KeyCode.from_char(name)
+        """将录制时保存的按键名称转换成 pynput 可发送的按键对象。"""
+        normalized = str(name).strip().lower()
+
+        aliases = {
+            "ctrl": "ctrl",
+            "control": "ctrl",
+            "ctrl_l": "ctrl_l",
+            "ctrl_r": "ctrl_r",
+            "shift": "shift",
+            "shift_l": "shift_l",
+            "shift_r": "shift_r",
+            "alt": "alt",
+            "alt_l": "alt_l",
+            "alt_r": "alt_r",
+            "cmd": "cmd",
+            "cmd_l": "cmd_l",
+            "cmd_r": "cmd_r",
+            "win": "cmd",
+            "windows": "cmd",
+            "enter": "enter",
+            "return": "enter",
+            "esc": "esc",
+            "escape": "esc",
+            "tab": "tab",
+            "backspace": "backspace",
+            "space": "space",
+            "delete": "delete",
+            "insert": "insert",
+            "home": "home",
+            "end": "end",
+            "page_up": "page_up",
+            "page_down": "page_down",
+            "up": "up",
+            "down": "down",
+            "left": "left",
+            "right": "right",
+            "pause": "pause",
+            "print_screen": "print_screen",
+            "printscreen": "print_screen",
+            "menu": "menu",
+            "caps_lock": "caps_lock",
+            "capslock": "caps_lock",
+            "num_lock": "num_lock",
+            "numlock": "num_lock",
+            "scroll_lock": "scroll_lock",
+            "scrolllock": "scroll_lock",
+        }
+
+        for i in range(1, 13):
+            aliases[f"f{i}"] = f"f{i}"
+
+        key_name = aliases.get(normalized, normalized)
+
+        # 优先使用 pynput.Key 中的特殊按键，避免把多字符名称错误地交给 KeyCode.from_char。
+        special_key = getattr(keyboard.Key, key_name, None)
+        if special_key is not None:
+            return special_key
+
+        # 普通字符只能是单个字符，否则 KeyCode.from_char 会在 Windows 下触发 ord() 异常。
+        if len(name) == 1:
+            return keyboard.KeyCode.from_char(name)
+
+        # 某些旧版本/特殊录制数据可能保存为 Key.xxx，兼容这种格式。
+        if normalized.startswith("key."):
+            key_name = normalized[4:]
+            special_key = getattr(keyboard.Key, key_name, None)
+            if special_key is not None:
+                return special_key
+
+        raise ValueError(f"无法识别的按键：{name}")
 
     def _state(self, state: str):
-        if self.on_state: self.on_state(state)
+        if self.on_state:
+            self.on_state(state)
