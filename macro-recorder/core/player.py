@@ -92,6 +92,8 @@ class MacroPlayer:
     def _execute(self, event: MacroEvent):
         data = event.data
 
+        if event.type == "delay":
+            return
         if event.type == "key_down":
             self.keyboard.press(self._key(data["key"]))
         elif event.type == "key_up":
@@ -164,16 +166,13 @@ class MacroPlayer:
 
         key_name = aliases.get(normalized, normalized)
 
-        # 优先使用 pynput.Key 中的特殊按键，避免把多字符名称错误地交给 KeyCode.from_char。
         special_key = getattr(keyboard.Key, key_name, None)
         if special_key is not None:
             return special_key
 
-        # 普通字符只能是单个字符，否则 KeyCode.from_char 会在 Windows 下触发 ord() 异常。
         if len(name) == 1:
             return keyboard.KeyCode.from_char(name)
 
-        # 某些旧版本/特殊录制数据可能保存为 Key.xxx，兼容这种格式。
         if normalized.startswith("key."):
             key_name = normalized[4:]
             special_key = getattr(keyboard.Key, key_name, None)
