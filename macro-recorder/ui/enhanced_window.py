@@ -13,12 +13,14 @@ class EnhancedMainWindow(MainWindow):
         super().__init__()
         self._build_manual_actions()
         self._build_countdown_overlay()
+        self._refresh()
 
     def _build_manual_actions(self):
         root = self.centralWidget()
         layout = root.layout()
         bar = QHBoxLayout()
         bar.addWidget(QLabel("手动添加："))
+        self.manual_buttons = []
         for action, text in (
             ("key", "键盘按键"),
             ("click", "鼠标点击"),
@@ -29,6 +31,7 @@ class EnhancedMainWindow(MainWindow):
             button = QPushButton(text)
             button.clicked.connect(lambda _, value=action: self.insert_action(value))
             bar.addWidget(button)
+            self.manual_buttons.append(button)
         bar.addStretch()
         layout.insertLayout(5, bar)
         self.manual_bar = bar
@@ -76,6 +79,12 @@ class EnhancedMainWindow(MainWindow):
             max(0, (root.height() - self.countdown_overlay.height()) // 2),
         )
         self.countdown_overlay.raise_()
+
+    def _refresh(self):
+        super()._refresh()
+        enabled = self._can_edit()
+        for button in getattr(self, "manual_buttons", []):
+            button.setEnabled(enabled)
 
     def start_recording(self):
         super().start_recording()
