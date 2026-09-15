@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot, QSettings, QEvent
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QListWidget, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QSpinBox, QVBoxLayout, QWidget
+    QApplication, QFileDialog, QDialog, QDialogButtonBox, QFormLayout,
+    QGroupBox, QHBoxLayout, QLabel, QListWidget, QMainWindow, QMessageBox,
+    QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget, QKeySequenceEdit
 )
 from pynput import keyboard
 
@@ -22,6 +23,33 @@ class Bridge(QObject):
     state = Signal(str)
 
 
+class HotkeyDialog(QDialog):
+    def __init__(self, current: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("快捷键设置")
+        self.setModal(True)
+        self.resize(420, 150)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.edit = QKeySequenceEdit(QKeySequence(current))
+        self.edit.setMaximumSequenceLength(1)
+        form.addRow("录制快捷键", self.edit)
+        layout.addLayout(form)
+
+        tip = QLabel("仅支持单键快捷键，例如 F6、F8、F9、Pause。")
+        tip.setStyleSheet("color: #777;")
+        layout.addWidget(tip)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def value(self) -> str:
+        return self.edit.keySequence().toString(QKeySequence.PortableText)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -30,18 +58,17 @@ class MainWindow(QMainWindow):
         self.bridge = Bridge()
         self.events: list[MacroEvent] = []
         self.current_file = ""
+        self.settings = QSettings("Lxkgit", "MacroRecorder")
+        self.record_hotkey = self.settings.value("record_hotkey", "F8")
 
         self.recorder = MacroRecorder(on_event=self.bridge.recorded.emit)
+        self.recorder.set_ignored_keys({self.qt_to_pynput_key(self.record_hotkey)})
         self.player = MacroPlayer(
             on_progress=self.bridge.progress.emit,
             on_state=self.bridge.state.emit,
         )
-        self.hotkey_listener = keyboard.GlobalHotKeys({
-            "<f8>": lambda: self.bridge.hotkey.emit("f8"),
-            "<f9>": lambda: self.bridge.hotkey.emit("f9"),
-            "<f10>": lambda: self.bridge.hotkey.emit("f10"),
-        })
-        self.hotkey_listener.start()
+        self.hotkey_listener = None
+        self.install_record_hotkey()
 
         self._build_ui()
         self.bridge.recorded.connect(self.on_recorded)
@@ -49,6 +76,41 @@ class MainWindow(QMainWindow):
         self.bridge.progress.connect(self.on_progress)
         self.bridge.state.connect(self.on_state)
         self.update_ui()
+
+    @staticmethod
+    def qt_to_pynput_key(value: str) -> str:
+        key = value.strip().lower()
+        mapping = {
+            "esc": "esc",
+            "escape": "esc",
+            "return": "enter",
+            "enter": "enter",
+            "space": "space",
+            "tab": "tab",
+            "backspace": "backspace",
+            "delete": "delete",
+            "insert": "insert",
+            "home": "home",
+            "end": "end",
+            "pageup": "page_up",
+            "pagedown": "page_down",
+            "left": "left",
+            "right": "right",
+            "up": "up",
+            "down": "down",
+            "pause": "pause",
+        }
+        return mapping.get(key, key)
+
+    def install_record_hotkey(self):
+        if self.hotkey_listener:
+            self.hotkey_listener.stop()
+        pynput_key = self.qt_to_pynput_key(self.record_hotkey)
+        self.recorder.set_ignored_keys({pynput_key})
+        self.hotkey_listener = keyboard.GlobalHotKeys({
+            f"<{pynput_key}>": lambda: self.bridge.hotkey.emit("record")
+        })
+        self.hotkey_listener.start()
 
     def _build_ui(self):
         root = QWidget()
@@ -61,9 +123,14 @@ class MainWindow(QMainWindow):
         """)
         layout = QVBoxLayout(root)
 
+        title_row = QHBoxLayout()
         title = QLabel("键盘鼠标宏录制器")
         title.setStyleSheet("font-size: 24px; font-weight: 700; padding: 8px 0;")
-        layout.addWidget(title)
+        title_row.addWidget(title, 1)
+        settings_btn = QPushButton("⚙ 设置")
+        settings_btn.clicked.connect(self.open_settings)
+        title_row.addWidget(settings_btn)
+        layout.addLayout(title_row)
 
         controls = QHBoxLayout()
         self.record_btn = QPushButton("● 开始录制")
@@ -111,10 +178,40 @@ class MainWindow(QMainWindow):
         bottom.addWidget(load_btn)
         layout.addLayout(bottom)
 
-        shortcuts = QLabel("全局快捷键：F8 录制/停止   F9 播放/暂停   F10 紧急停止")
-        shortcuts.setStyleSheet("color: #777; padding-top: 4px;")
-        layout.addWidget(shortcuts)
+        self.shortcuts = QLabel()
+        self.shortcuts.setStyleSheet("color: #777; padding-top: 4px;")
+        layout.addWidget(self.shortcuts)
         self.setCentralWidget(root)
+        self.update_shortcut_label()
+
+    def update_shortcut_label(self):
+        self.shortcuts.setText(
+            f"全局快捷键：{self.record_hotkey} 录制/停止   F9 播放/暂停   F10 紧急停止"
+        )
+
+    @Slot()
+    def open_settings(self):
+        if self.recorder.recording or self.player.running:
+            QMessageBox.information(self, "提示", "录制或播放过程中不能修改快捷键。")
+            return
+        dialog = HotkeyDialog(self.record_hotkey, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        value = dialog.value()
+        if not value:
+            QMessageBox.warning(self, "设置失败", "请设置一个录制快捷键。")
+            return
+        if "," in value or "+" in value:
+            QMessageBox.warning(self, "设置失败", "录制快捷键暂时只支持单键，请不要使用 Ctrl/Alt/Shift 组合。")
+            return
+        if value.upper() in {"F9", "F10"}:
+            QMessageBox.warning(self, "设置失败", "F9 和 F10 已保留给播放和紧急停止。")
+            return
+        self.record_hotkey = value
+        self.settings.setValue("record_hotkey", value)
+        self.install_record_hotkey()
+        self.update_shortcut_label()
+        self.status.setText(f"录制快捷键已修改为 {value}")
 
     @Slot()
     def toggle_record(self):
@@ -154,15 +251,13 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def on_recorded(self, event: MacroEvent):
         self.events.append(event)
-        # QListWidget 的更新只在 Qt 主线程执行，监听线程不会直接操作 UI。
         self.list.addItem(self.format_event(event))
-        # 大量鼠标移动时不要每个事件都强制滚动，避免触发额外布局开销。
         if self.list.count() % 20 == 0:
             self.list.scrollToBottom()
 
     @Slot(str)
     def on_hotkey(self, key: str):
-        if key == "f8":
+        if key == "record":
             self.toggle_record()
         elif key == "f9":
             if self.player.running:
@@ -246,7 +341,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self.recorder.stop()
         self.player.stop()
-        self.hotkey_listener.stop()
+        if self.hotkey_listener:
+            self.hotkey_listener.stop()
         event.accept()
 
 
