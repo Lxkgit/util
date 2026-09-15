@@ -1,7 +1,6 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -25,7 +24,7 @@ class SettingsDialog(QDialog):
         self.resize(700, 500)
         self.start_hotkey = start
         self.stop_hotkey = stop
-        self.shared = shared
+        self.shared = False
         self.play_pause_hotkey = play_pause
         self.stop_playback_hotkey = stop_playback
 
@@ -93,12 +92,7 @@ class SettingsDialog(QDialog):
     def _shortcut_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        card, box = self._card("录制快捷键", "开始和结束可以使用同一个快捷键，也可以分别配置。支持单键和组合键。")
-
-        self.shared_check = QCheckBox("开始和结束使用同一个快捷键")
-        self.shared_check.setChecked(self.shared)
-        self.shared_check.toggled.connect(self._toggle_shared)
-        box.addWidget(self.shared_check)
+        card, box = self._card("快捷键", "录制控制分为开始/暂停/继续和结束录制，均支持单键和组合键。")
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -106,16 +100,15 @@ class SettingsDialog(QDialog):
         self.stop_edit = QKeySequenceEdit(QKeySequence(self.stop_hotkey))
         self.start_edit.setMaximumSequenceLength(1)
         self.stop_edit.setMaximumSequenceLength(1)
-        form.addRow("开始录制", self.start_edit)
+        form.addRow("开始 / 暂停 / 继续录制", self.start_edit)
         form.addRow("结束录制", self.stop_edit)
         box.addLayout(form)
 
-        self.tip = QLabel()
-        self.tip.setStyleSheet("color:#777;")
-        box.addWidget(self.tip)
+        tip = QLabel("推荐：F8 控制开始/暂停/继续，Shift+F8 结束录制。")
+        tip.setStyleSheet("color:#777;")
+        box.addWidget(tip)
         layout.addWidget(card)
         layout.addStretch()
-        self._toggle_shared(self.shared)
         return page
 
     def _record_page(self):
@@ -150,24 +143,14 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return page
 
-    def _toggle_shared(self, checked):
-        self.shared = checked
-        if hasattr(self, "stop_edit"):
-            self.stop_edit.setEnabled(not checked)
-        if hasattr(self, "tip"):
-            self.tip.setText("结束录制使用相同快捷键。" if checked else "开始和结束快捷键必须不同。")
-
     def _accept(self):
         start = self.start_edit.keySequence().toString(QKeySequence.PortableText).strip()
         stop = self.stop_edit.keySequence().toString(QKeySequence.PortableText).strip()
         play_pause = self.play_pause_edit.keySequence().toString(QKeySequence.PortableText).strip()
         stop_playback = self.stop_playback_edit.keySequence().toString(QKeySequence.PortableText).strip()
 
-        if self.shared:
-            stop = start
-
         values = {
-            "开始录制": start,
+            "开始 / 暂停 / 继续录制": start,
             "结束录制": stop,
             "播放 / 暂停": play_pause,
             "结束播放": stop_playback,
@@ -176,10 +159,6 @@ class SettingsDialog(QDialog):
             if not value:
                 QMessageBox.warning(self, "设置失败", f"请设置{name}快捷键。")
                 return
-
-        if not self.shared and start.lower() == stop.lower():
-            QMessageBox.warning(self, "设置失败", "独立模式下开始和结束录制快捷键不能相同。")
-            return
 
         normalized = {}
         for name, value in values.items():
