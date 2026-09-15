@@ -3,38 +3,81 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
-from core.model import MacroEvent
-from ui.action_dialog import ActionInsertDialog
+from ui.macro_editor import MacroEditorDialog
 from ui.main_window import MainWindow
 
 
 class EnhancedMainWindow(MainWindow):
     def __init__(self):
         super().__init__()
-        self._build_manual_actions()
+        self._simplify_main_page()
         self._build_countdown_overlay()
         self._refresh()
 
-    def _build_manual_actions(self):
+    def _simplify_main_page(self):
+        # 编辑相关内容全部移入独立宏编辑器，主页面只负责录制、播放和文件管理。
+        self.list.hide()
+        for widget in (
+            self.edit_button,
+            self.duplicate_button,
+            self.up_button,
+            self.down_button,
+            self.delete_button,
+        ):
+            widget.hide()
+
+        editor_button = QPushButton("✎  打开宏编辑器")
+        editor_button.setMinimumHeight(38)
+        editor_button.clicked.connect(self.open_macro_editor)
+        controls = self.record_btn.parentWidget().layout()
+        controls.addWidget(editor_button)
+        self.editor_button = editor_button
+
         root = self.centralWidget()
         layout = root.layout()
-        bar = QHBoxLayout()
-        bar.addWidget(QLabel("手动添加："))
-        self.manual_buttons = []
-        for action, text in (
-            ("key", "键盘按键"),
-            ("click", "鼠标点击"),
-            ("move", "鼠标移动"),
-            ("scroll", "滚轮"),
-            ("delay", "延迟"),
-        ):
-            button = QPushButton(text)
-            button.clicked.connect(lambda _, value=action: self.insert_action(value))
-            bar.addWidget(button)
-            self.manual_buttons.append(button)
-        bar.addStretch()
-        layout.insertLayout(5, bar)
-        self.manual_bar = bar
+        summary = QFrame()
+        summary.setObjectName("macroSummary")
+        summary.setStyleSheet(
+            "QFrame#macroSummary{background:white;border:1px solid #e4e7ed;border-radius:12px;}"
+            "QLabel#summaryTitle{font-size:16px;font-weight:700;}"
+            "QLabel#summaryText{color:#7a8491;}"
+        )
+        summary_layout = QHBoxLayout(summary)
+        summary_layout.setContentsMargins(16, 12, 16, 12)
+        title_box = QVBoxLayout()
+        title = QLabel("当前宏")
+        title.setObjectName("summaryTitle")
+        self.summary_text = QLabel()
+        self.summary_text.setObjectName("summaryText")
+        title_box.addWidget(title)
+        title_box.addWidget(self.summary_text)
+        summary_layout.addLayout(title_box, 1)
+        open_editor = QPushButton("编辑宏")
+        open_editor.clicked.connect(self.open_macro_editor)
+        summary_layout.addWidget(open_editor)
+        # 原事件列表所在位置替换成简洁摘要。
+        layout.insertWidget(layout.indexOf(self.progress) + 1, summary)
+        self.summary_panel = summary
+
+    def open_macro_editor(self):
+        if self.recorder.recording or self._pending or self.player.running:
+            self.status.setText("请先停止当前录制或播放，再打开宏编辑器")
+            return
+        dialog = MacroEditorDialog(self.events, self)
+        if dialog.exec():
+            self.events = dialog.events
+            self._reload_event_list(-1)
+            self.progress.setValue(0)
+            self.status.setText(f"宏已更新，共 {len(self.events)} 个操作")
+            self._refresh()
+
+    def _refresh(self):
+        super()._refresh()
+        if hasattr(self, "summary_text"):
+            if not self.events:
+                self.summary_text.setText("暂无操作，可以录制新宏或打开编辑器手动创建")
+            else:
+                self.summary_text.setText(f"共 {len(self.events)} 个操作，双击“打开宏编辑器”进行详细编辑和安全预览")
 
     def _build_countdown_overlay(self):
         root = self.centralWidget()
@@ -80,12 +123,6 @@ class EnhancedMainWindow(MainWindow):
         )
         self.countdown_overlay.raise_()
 
-    def _refresh(self):
-        super()._refresh()
-        enabled = self._can_edit()
-        for button in getattr(self, "manual_buttons", []):
-            button.setEnabled(enabled)
-
     def start_recording(self):
         super().start_recording()
         if self._pending and self.record_countdown > 0:
@@ -128,34 +165,6 @@ class EnhancedMainWindow(MainWindow):
     def _begin_recording(self):
         self.countdown_overlay.hide()
         super()._begin_recording()
-
-    def insert_action(self, action):
-        if not self._can_edit():
-            return
-        dialog = ActionInsertDialog(action, self)
-        if not dialog.exec() or not dialog.events:
-            return
-        selected = self._selected_index()
-        insert_at = selected + 1 if selected >= 0 else len(self.events)
-        self.events[insert_at:insert_at] = dialog.events
-        self._reload_event_list(insert_at)
-        self.status.setText(f"已添加 {len(dialog.events)} 个操作")
-
-    @staticmethod
-    def format_event(event: MacroEvent):
-        data = event.data
-        if event.type.startswith("key"):
-            return f"{event.type}  {data.get('key')}  +{event.delay:.3f}s"
-        if event.type == "mouse_move":
-            return f"mouse_move  ({data['x']}, {data['y']})  +{event.delay:.3f}s"
-        if event.type == "mouse_click":
-            state = "按下" if data["pressed"] else "释放"
-            return f"mouse_click  {data['button']} {state}  +{event.delay:.3f}s"
-        if event.type == "mouse_scroll":
-            return f"mouse_scroll  ({data['dx']}, {data['dy']})  +{event.delay:.3f}s"
-        if event.type == "delay":
-            return f"delay  等待 {event.delay:.3f}s"
-        return str(event)
 
     def closeEvent(self, event):
         if hasattr(self, "countdown_overlay"):
