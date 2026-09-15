@@ -23,8 +23,6 @@ from ui.event_editor import EventEditorDialog
 
 
 class PointPicker(QDialog):
-    """全屏鼠标选点，只记录坐标，不执行任何鼠标操作。"""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.point: tuple[int, int] | None = None
@@ -42,7 +40,6 @@ class PointPicker(QDialog):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
         painter.setPen(QPen(Qt.GlobalColor.red, 2))
         center = self.mapFromGlobal(self.cursor().pos())
         painter.drawLine(center.x() - 14, center.y(), center.x() + 14, center.y())
@@ -80,7 +77,8 @@ class MouseActionDialog(QDialog):
         self.action = action
         self.events: list[MacroEvent] = []
         self.point: tuple[int, int] | None = None
-        self.setWindowTitle({"click": "设置鼠标点击", "move": "设置鼠标移动", "scroll": "设置滚轮"}[action])
+        titles = {"click": "设置鼠标点击", "move": "设置鼠标移动", "scroll": "设置滚轮"}
+        self.setWindowTitle(titles[action])
         self.resize(460, 300)
 
         root = QVBoxLayout(self)
@@ -174,9 +172,10 @@ class MacroEditorDialog(QDialog):
         self.events = [MacroEvent(e.type, e.delay, dict(e.data)) for e in events]
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
-        self._preview_timer.timeout.connect(self._preview_tick)
+        self._preview_timer.timeout.connect(self._preview_timer_tick)
         self._preview_index = 0
         self._preview_running = False
+        self._preview_waiting = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 18, 22, 18)
@@ -372,6 +371,7 @@ class MacroEditorDialog(QDialog):
             return
         self._preview_running = True
         self._preview_index = 0
+        self._preview_waiting = False
         self.preview_button.setText("■ 停止预览")
         self.preview_status.setText("正在安全预览，不会执行真实操作")
         self.virtual_cursor.show()
@@ -380,30 +380,50 @@ class MacroEditorDialog(QDialog):
     def stop_preview(self):
         self._preview_timer.stop()
         self._preview_running = False
+        self._preview_waiting = False
         self.preview_button.setText("▶ 播放预览")
         self.preview_status.setText("预览：已停止，未执行任何真实操作")
         self.preview_action.setText("等待播放")
         self.list.clearSelection()
 
     def _preview_tick(self):
-        if not self._preview_running:
-            return
-        if self._preview_index >= len(self.events):
-            self._preview_running = False
-            self.preview_button.setText("▶ 播放预览")
-            self.preview_status.setText("预览完成：所有操作均为模拟，没有执行真实操作")
-            self.preview_action.setText("播放完成")
-            self.list.clearSelection()
+        if not self._preview_running or self._preview_index >= len(self.events):
+            if self._preview_running:
+                self._preview_running = False
+                self.preview_button.setText("▶ 播放预览")
+                self.preview_status.setText("预览完成：所有操作均为模拟，没有执行真实操作")
+                self.preview_action.setText("播放完成")
+                self.list.clearSelection()
             return
 
         index = self._preview_index
         event = self.events[index]
         self.list.setCurrentRow(index)
-        self._apply_preview_event(event)
-        self.preview_status.setText(f"预览 {index + 1}/{len(self.events)} · 延迟 {event.delay:.3f}s · 不执行真实操作")
+        self._preview_waiting = True
+        if event.delay > 0:
+            self.preview_action.setText(f"准备执行第 {index + 1}/{len(self.events)} 步\n等待 {event.delay:.3f} 秒")
+            self.preview_status.setText("按照宏中的原始延迟等待中 · 不执行真实操作")
+            self._preview_timer.start(max(1, int(event.delay * 1000)))
+        else:
+            self._apply_preview_event(event)
+            self._schedule_next_preview()
+
+    def _preview_timer_tick(self):
+        if not self._preview_running:
+            return
+        index = self._preview_index
+        if index >= len(self.events):
+            return
+        self._preview_waiting = False
+        self._apply_preview_event(self.events[index])
+        self._schedule_next_preview()
+
+    def _schedule_next_preview(self):
         self._preview_index += 1
-        delay_ms = max(80, int(max(event.delay, 0.08) * 1000))
-        self._preview_timer.start(delay_ms)
+        if self._preview_index >= len(self.events):
+            self._preview_timer.start(120)
+        else:
+            self._preview_timer.start(80)
 
     def _apply_preview_event(self, event: MacroEvent):
         data = event.data
