@@ -46,16 +46,12 @@ class HotkeyService:
 
     def install(self, record_start: str, record_stop: str, record_shared: bool, play_pause: str, stop_playback: str):
         self.stop()
-        hotkeys = {}
-
-        if record_shared:
-            hotkeys[self._spec(record_start)] = lambda: self.on_action("record_toggle")
-        else:
-            hotkeys[self._spec(record_start)] = lambda: self.on_action("record_start")
-            hotkeys[self._spec(record_stop)] = lambda: self.on_action("record_stop")
-
-        hotkeys[self._spec(play_pause)] = lambda: self.on_action("play_pause")
-        hotkeys[self._spec(stop_playback)] = lambda: self.on_action("stop_playback")
+        hotkeys = {
+            self._spec(record_start): lambda: self.on_action("record_toggle"),
+            self._spec(record_stop): lambda: self.on_action("record_stop"),
+            self._spec(play_pause): lambda: self.on_action("play_pause"),
+            self._spec(stop_playback): lambda: self.on_action("stop_playback"),
+        }
 
         self.listener = keyboard.GlobalHotKeys(hotkeys)
         self.listener.start()
