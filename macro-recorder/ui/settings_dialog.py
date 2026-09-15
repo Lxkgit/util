@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMessageBox,
     QKeySequenceEdit,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, start: str, stop: str, shared: bool, play_pause: str, stop_playback: str, parent=None):
+    def __init__(self, start: str, stop: str, shared: bool, play_pause: str, stop_playback: str, countdown: int = 3, parent=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
         self.setModal(True)
@@ -27,6 +28,7 @@ class SettingsDialog(QDialog):
         self.shared = False
         self.play_pause_hotkey = play_pause
         self.stop_playback_hotkey = stop_playback
+        self.countdown = max(0, int(countdown))
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -70,6 +72,7 @@ class SettingsDialog(QDialog):
             "QFrame#card{background:white;border:1px solid #e4e7ed;border-radius:10px;}"
             "QLabel{color:#303133;}"
             "QKeySequenceEdit{min-height:34px;border:1px solid #dcdfe6;border-radius:6px;}"
+            "QSpinBox{min-height:34px;border:1px solid #dcdfe6;border-radius:6px;padding:0 8px;}"
             "QDialogButtonBox QPushButton{min-width:80px;min-height:34px;}"
         )
 
@@ -114,12 +117,20 @@ class SettingsDialog(QDialog):
     def _record_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        card, box = self._card("录制设置", "鼠标移动会进行采样，降低高频事件对界面的影响。")
+        card, box = self._card("录制设置", "开始录制前先倒计时，方便你切换到需要操作的窗口。")
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-        form.addRow("鼠标移动采样", QLabel("约 30ms / 次"))
-        form.addRow("最小移动距离", QLabel("3 像素"))
+
+        self.countdown_spin = QSpinBox()
+        self.countdown_spin.setRange(0, 10)
+        self.countdown_spin.setValue(self.countdown)
+        self.countdown_spin.setSuffix(" 秒")
+        form.addRow("录制前倒计时", self.countdown_spin)
+
+        tip = QLabel("设置为 0 秒可关闭倒计时。")
+        tip.setStyleSheet("color:#777;")
         box.addLayout(form)
+        box.addWidget(tip)
         layout.addWidget(card)
         layout.addStretch()
         return page
@@ -172,4 +183,5 @@ class SettingsDialog(QDialog):
         self.stop_hotkey = stop
         self.play_pause_hotkey = play_pause
         self.stop_playback_hotkey = stop_playback
+        self.countdown = self.countdown_spin.value()
         self.accept()
