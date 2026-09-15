@@ -70,9 +70,6 @@ class ActionInsertDialog(QDialog):
 
         self.button_combo = QComboBox()
         self.button_combo.addItems(["left", "right", "middle"])
-        self.press_combo = QComboBox()
-        self.press_combo.addItem("按下", True)
-        self.press_combo.addItem("释放", False)
 
         self._rebuild_form()
 
@@ -97,7 +94,6 @@ class ActionInsertDialog(QDialog):
             self.form.addRow("X", self.x_spin)
             self.form.addRow("Y", self.y_spin)
             self.form.addRow("鼠标按钮", self.button_combo)
-            self.form.addRow("状态", self.press_combo)
             self.form.addRow("执行前延迟", self.delay)
         elif action == "move":
             self.form.addRow("X", self.x_spin)
@@ -129,10 +125,12 @@ class ActionInsertDialog(QDialog):
             data = {
                 "x": self.x_spin.value(),
                 "y": self.y_spin.value(),
-                "button": self.button_combo.currentData() or self.button_combo.currentText(),
-                "pressed": bool(self.press_combo.currentData()),
+                "button": self.button_combo.currentText(),
             }
-            self.events = [MacroEvent("mouse_click", delay, data)]
+            self.events = [
+                MacroEvent("mouse_click", delay, {**data, "pressed": True}),
+                MacroEvent("mouse_click", 0.0, {**data, "pressed": False}),
+            ]
         elif action == "move":
             self.events = [
                 MacroEvent(
