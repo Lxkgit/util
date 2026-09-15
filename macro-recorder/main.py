@@ -27,12 +27,12 @@ class Bridge(QObject):
 class SettingsDialog(QDialog):
     def __init__(self, start_hotkey: str, stop_hotkey: str, shared: bool, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("设置 - 键盘鼠标宏录制器")
+        self.setWindowTitle("设置")
         self.setModal(True)
-        self.resize(700, 460)
-        self.start_hotkey = start_hotkey or "F8"
-        self.stop_hotkey = stop_hotkey or self.start_hotkey
-        self.shared = bool(shared)
+        self.resize(680, 430)
+        self.start_hotkey = start_hotkey
+        self.stop_hotkey = stop_hotkey
+        self.shared = shared
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -40,13 +40,12 @@ class SettingsDialog(QDialog):
 
         self.menu = QListWidget()
         self.menu.setObjectName("settingsMenu")
-        self.menu.setFixedWidth(170)
+        self.menu.setFixedWidth(160)
         self.menu.addItems(["快捷键", "录制", "播放"])
         root.addWidget(self.menu)
 
         right = QVBoxLayout()
         right.setContentsMargins(24, 20, 24, 20)
-        right.setSpacing(12)
         root.addLayout(right, 1)
 
         title = QLabel("设置")
@@ -55,7 +54,6 @@ class SettingsDialog(QDialog):
 
         self.pages = QStackedWidget()
         right.addWidget(self.pages, 1)
-
         self.pages.addWidget(self._shortcut_page())
         self.pages.addWidget(self._record_page())
         self.pages.addWidget(self._play_page())
@@ -78,7 +76,7 @@ class SettingsDialog(QDialog):
             QDialogButtonBox QPushButton { min-width: 80px; min-height: 34px; }
         """)
 
-    def _card(self, title: str, subtitle: str = "") -> tuple[QFrame, QVBoxLayout]:
+    def _card(self, title: str, subtitle: str = ""):
         card = QFrame()
         card.setObjectName("settingCard")
         layout = QVBoxLayout(card)
@@ -97,28 +95,26 @@ class SettingsDialog(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 8, 0, 0)
-        card, form = self._card("录制快捷键", "开始和结束可以共用一个快捷键，也可以分别设置。")
-
+        card, box = self._card("录制快捷键", "可以设置开始和结束录制使用同一个快捷键，也可以分别设置。")
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         self.shared_check = QCheckBox("开始和结束使用同一个快捷键")
         self.shared_check.setChecked(self.shared)
-        form.addWidget(self.shared_check)
-
+        self.shared_check.toggled.connect(self._toggle_shared)
+        box.addWidget(self.shared_check)
         self.start_edit = QKeySequenceEdit(QKeySequence(self.start_hotkey))
         self.start_edit.setMaximumSequenceLength(1)
         form.addRow("开始录制", self.start_edit)
-
         self.stop_edit = QKeySequenceEdit(QKeySequence(self.stop_hotkey))
         self.stop_edit.setMaximumSequenceLength(1)
         form.addRow("结束录制", self.stop_edit)
-
+        box.addLayout(form)
         self.shared_tip = QLabel()
         self.shared_tip.setWordWrap(True)
         self.shared_tip.setStyleSheet("color: #777; margin-top: 4px;")
-        form.addWidget(self.shared_tip)
+        box.addWidget(self.shared_tip)
         layout.addWidget(card)
         layout.addStretch()
-
-        self.shared_check.toggled.connect(self._toggle_shared)
         self._toggle_shared(self.shared)
         return page
 
@@ -126,9 +122,11 @@ class SettingsDialog(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 8, 0, 0)
-        card, form = self._card("录制设置", "录制器会降低高频鼠标移动事件，避免录制时界面卡顿。")
+        card, box = self._card("录制设置", "录制过程中会自动降低高频鼠标移动事件，减少界面占用。")
+        form = QFormLayout()
         form.addRow("鼠标移动采样", QLabel("约 30ms / 次"))
         form.addRow("最小移动距离", QLabel("3 像素"))
+        box.addLayout(form)
         layout.addWidget(card)
         layout.addStretch()
         return page
@@ -137,49 +135,42 @@ class SettingsDialog(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 8, 0, 0)
-        card, form = self._card("播放设置", "播放快捷键目前保持固定。")
+        card, box = self._card("播放设置", "播放快捷键暂时保持固定，后续可以继续开放配置。")
+        form = QFormLayout()
         form.addRow("播放 / 暂停", QLabel("F9"))
         form.addRow("紧急停止", QLabel("F10"))
+        box.addLayout(form)
         layout.addWidget(card)
         layout.addStretch()
         return page
 
     def _toggle_shared(self, checked: bool):
-        self.shared = bool(checked)
+        self.shared = checked
         if hasattr(self, "stop_edit"):
-            self.stop_edit.setEnabled(not self.shared)
+            self.stop_edit.setEnabled(not checked)
         if hasattr(self, "shared_tip"):
-            self.shared_tip.setText(
-                "结束录制将使用开始录制快捷键。" if self.shared
-                else "开始和结束快捷键必须不同，且不能使用 F9/F10。"
-            )
+            self.shared_tip.setText("保存后，结束录制将与开始录制使用相同快捷键。" if checked else "开始和结束快捷键必须不同，且不能与 F9/F10 冲突。")
 
     def _accept(self):
         start = self.start_edit.keySequence().toString(QKeySequence.PortableText).strip()
         stop = self.stop_edit.keySequence().toString(QKeySequence.PortableText).strip()
-
         if not start:
-            QMessageBox.warning(self, "设置失败", "请设置开始录制快捷键。", parent=self)
+            QMessageBox.warning(self, "设置失败", "请设置开始录制快捷键。")
             return
         if self.shared:
             stop = start
         elif not stop:
-            QMessageBox.warning(self, "设置失败", "请设置结束录制快捷键。", parent=self)
+            QMessageBox.warning(self, "设置失败", "请设置结束录制快捷键。")
             return
-
         if "," in start or "," in stop:
-            QMessageBox.warning(self, "设置失败", "每个快捷键只能设置一个按键或一个组合键。", parent=self)
+            QMessageBox.warning(self, "设置失败", "每个快捷键暂时只支持一个按键或一个组合键。")
             return
-
-        reserved = {"F9", "F10"}
-        if start.upper() in reserved or stop.upper() in reserved:
-            QMessageBox.warning(self, "设置失败", "F9 和 F10 已保留。", parent=self)
+        if start.upper() in {"F9", "F10"} or stop.upper() in {"F9", "F10"}:
+            QMessageBox.warning(self, "设置失败", "F9 和 F10 已保留给播放/暂停和紧急停止。")
             return
-
         if not self.shared and start.lower() == stop.lower():
-            QMessageBox.warning(self, "设置失败", "独立模式下开始和结束快捷键不能相同。", parent=self)
+            QMessageBox.warning(self, "设置失败", "独立模式下开始和结束快捷键不能相同。")
             return
-
         self.start_hotkey = start
         self.stop_hotkey = stop
         self.accept()
@@ -193,17 +184,13 @@ class MainWindow(QMainWindow):
         self.bridge = Bridge()
         self.events: list[MacroEvent] = []
         self.current_file = ""
-        self._record_start_pending = False
-
         self.settings = QSettings("Lxkgit", "MacroRecorder")
-        self.record_hotkey = str(self.settings.value("record_hotkey", "F8"))
-        self.stop_hotkey = str(self.settings.value("stop_hotkey", "F8"))
+        self.record_hotkey = self.settings.value("record_hotkey", "F8")
+        self.stop_hotkey = self.settings.value("stop_hotkey", "F8")
         self.shared_hotkey = self.settings.value("shared_hotkey", True, type=bool)
-
         self.recorder = MacroRecorder(on_event=self.bridge.recorded.emit)
         self.player = MacroPlayer(on_progress=self.bridge.progress.emit, on_state=self.bridge.state.emit)
         self.hotkey_listener = None
-
         self._build_ui()
         self.bridge.recorded.connect(self.on_recorded)
         self.bridge.hotkey.connect(self.on_hotkey)
@@ -216,26 +203,16 @@ class MainWindow(QMainWindow):
     def qt_to_pynput_key(value: str) -> str:
         value = value.strip()
         parts = [p.strip().lower() for p in value.split("+") if p.strip()]
-        mapping = {
-            "esc": "esc", "escape": "esc", "return": "enter", "enter": "enter",
-            "space": "space", "tab": "tab", "backspace": "backspace", "delete": "delete",
-            "insert": "insert", "home": "home", "end": "end", "pageup": "page_up",
-            "pagedown": "page_down", "left": "left", "right": "right", "up": "up",
-            "down": "down", "pause": "pause", "ctrl": "ctrl", "control": "ctrl",
-            "shift": "shift", "alt": "alt", "win": "cmd", "meta": "cmd",
-        }
+        mapping = {"esc":"esc","escape":"esc","return":"enter","enter":"enter","space":"space","tab":"tab","backspace":"backspace","delete":"delete","insert":"insert","home":"home","end":"end","pageup":"page_up","pagedown":"page_down","left":"left","right":"right","up":"up","down":"down","pause":"pause","ctrl":"ctrl","control":"ctrl","shift":"shift","alt":"alt","win":"cmd","meta":"cmd"}
         converted = [mapping.get(part, part) for part in parts]
         if len(converted) == 1:
             return converted[0]
-        return "+".join(
-            f"<{p}>" if p in {"ctrl", "shift", "alt", "cmd", "enter", "esc", "space", "tab"} else p
-            for p in converted
-        )
+        return "+".join(f"<{p}>" if p in {"ctrl","shift","alt","cmd","enter","esc","space","tab"} else p for p in converted)
 
     def ignored_keys_for_hotkeys(self) -> set[str]:
         keys = set()
         for shortcut in {self.record_hotkey, self.stop_hotkey}:
-            for part in str(shortcut).lower().split("+"):
+            for part in shortcut.lower().split("+"):
                 part = part.strip()
                 if part:
                     keys.add(self.qt_to_pynput_key(part).replace("<", "").replace(">", ""))
@@ -244,30 +221,21 @@ class MainWindow(QMainWindow):
     def install_hotkeys(self):
         if self.hotkey_listener:
             self.hotkey_listener.stop()
-            self.hotkey_listener = None
-
         self.recorder.set_ignored_keys(self.ignored_keys_for_hotkeys())
         hotkeys = {}
         start = self.qt_to_pynput_key(self.record_hotkey)
         stop = self.qt_to_pynput_key(self.stop_hotkey)
-
-        def hk(value: str) -> str:
-            return value if "+" in value or value.startswith("<") else f"<{value}>"
-
+        start_spec = f"<{start}>" if "+" not in start and not start.startswith("<") else start
+        stop_spec = f"<{stop}>" if "+" not in stop and not stop.startswith("<") else stop
         if self.shared_hotkey:
-            hotkeys[hk(start)] = lambda: self.bridge.hotkey.emit("record_toggle")
+            hotkeys[start_spec] = lambda: self.bridge.hotkey.emit("record_toggle")
         else:
-            hotkeys[hk(start)] = lambda: self.bridge.hotkey.emit("record_start")
-            hotkeys[hk(stop)] = lambda: self.bridge.hotkey.emit("record_stop")
+            hotkeys[start_spec] = lambda: self.bridge.hotkey.emit("record_start")
+            hotkeys[stop_spec] = lambda: self.bridge.hotkey.emit("record_stop")
         hotkeys["<f9>"] = lambda: self.bridge.hotkey.emit("f9")
         hotkeys["<f10>"] = lambda: self.bridge.hotkey.emit("f10")
-
-        try:
-            self.hotkey_listener = keyboard.GlobalHotKeys(hotkeys)
-            self.hotkey_listener.start()
-        except Exception as exc:
-            QMessageBox.warning(self, "快捷键启动失败", f"全局快捷键无法启动：\n{exc}")
-            self.hotkey_listener = None
+        self.hotkey_listener = keyboard.GlobalHotKeys(hotkeys)
+        self.hotkey_listener.start()
 
     def _build_ui(self):
         root = QWidget()
@@ -276,10 +244,10 @@ class MainWindow(QMainWindow):
             QMainWindow { background: #f5f7fa; }
             QPushButton { min-height: 38px; padding: 0 18px; border: 1px solid #dcdfe6; border-radius: 7px; background: white; }
             QPushButton:hover { background: #f2f6fc; }
-            QPushButton:pressed { background: #e8eef7; }
             QListWidget#eventList { background: white; border: 1px solid #e4e7ed; border-radius: 10px; padding: 6px; }
             QListWidget#eventList::item { padding: 9px 10px; border-bottom: 1px solid #f0f2f5; }
             QFrame#panel { background: white; border: 1px solid #e4e7ed; border-radius: 12px; }
+            QFrame#settingCard { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; }
             QSpinBox { min-height: 34px; border: 1px solid #dcdfe6; border-radius: 6px; padding: 0 8px; }
             QProgressBar { height: 8px; border: 0; border-radius: 4px; background: #e9edf2; }
             QProgressBar::chunk { border-radius: 4px; }
@@ -287,7 +255,6 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(root)
         layout.setContentsMargins(22, 18, 22, 18)
         layout.setSpacing(14)
-
         title_row = QHBoxLayout()
         title_box = QVBoxLayout()
         title = QLabel("键盘鼠标宏录制器")
@@ -301,14 +268,11 @@ class MainWindow(QMainWindow):
         settings_btn.clicked.connect(self.open_settings)
         title_row.addWidget(settings_btn)
         layout.addLayout(title_row)
-
         panel = QFrame()
         panel.setObjectName("panel")
         controls = QHBoxLayout(panel)
         controls.setContentsMargins(14, 12, 14, 12)
-
         self.record_btn = QPushButton("●  开始录制")
-        # 使用 pressed 而不是 clicked：停止录制时在鼠标释放前就停止监听，避免把停止按钮本身记录进去。
         self.record_btn.pressed.connect(self.toggle_record)
         self.play_btn = QPushButton("▶  播放")
         self.play_btn.clicked.connect(self.play)
@@ -321,7 +285,6 @@ class MainWindow(QMainWindow):
         for button in (self.record_btn, self.play_btn, self.pause_btn, self.stop_btn, self.clear_btn):
             controls.addWidget(button)
         layout.addWidget(panel)
-
         settings_row = QHBoxLayout()
         settings_row.addWidget(QLabel("循环次数"))
         self.repeat = QSpinBox()
@@ -334,15 +297,12 @@ class MainWindow(QMainWindow):
         self.status.setStyleSheet("font-weight: 600;")
         settings_row.addWidget(self.status)
         layout.addLayout(settings_row)
-
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         layout.addWidget(self.progress)
-
         self.list = QListWidget()
         self.list.setObjectName("eventList")
         layout.addWidget(self.list, 1)
-
         bottom = QHBoxLayout()
         self.file_label = QLabel("尚未保存")
         self.file_label.setStyleSheet("color: #7a8491;")
@@ -353,35 +313,20 @@ class MainWindow(QMainWindow):
         load_btn.clicked.connect(self.load)
         bottom.addWidget(save_btn)
         bottom.addWidget(load_btn)
+        self.hotkey_label = QLabel()
+        self.hotkey_label.setStyleSheet("color: #7a8491;")
+        bottom.addWidget(self.hotkey_label)
         layout.addLayout(bottom)
-
-        self.shortcuts = QLabel()
-        self.shortcuts.setStyleSheet("color: #7a8491;")
-        layout.addWidget(self.shortcuts)
         self.setCentralWidget(root)
-        self.update_shortcut_label()
 
-    def update_shortcut_label(self):
-        if self.shared_hotkey:
-            text = f"{self.record_hotkey} 开始/结束录制"
-        else:
-            text = f"{self.record_hotkey} 开始录制   {self.stop_hotkey} 结束录制"
-        self.shortcuts.setText(f"全局快捷键：{text}   F9 播放/暂停   F10 紧急停止")
-
-    @Slot()
     def open_settings(self):
-        if self.recorder.recording or self._record_start_pending or self.player.running:
-            QMessageBox.information(self, "提示", "录制或播放过程中不能修改设置。", parent=self)
-            return
-
-        # 先暂时停掉全局快捷键监听，避免设置窗口输入快捷键时被 GlobalHotKeys 抢走。
+        if self.recorder.recording:
+            self.stop_recording()
         if self.hotkey_listener:
             self.hotkey_listener.stop()
             self.hotkey_listener = None
-
         dialog = SettingsDialog(self.record_hotkey, self.stop_hotkey, self.shared_hotkey, self)
-        result = dialog.exec()
-        if result == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.record_hotkey = dialog.start_hotkey
             self.stop_hotkey = dialog.stop_hotkey
             self.shared_hotkey = dialog.shared
@@ -389,16 +334,16 @@ class MainWindow(QMainWindow):
             self.settings.setValue("stop_hotkey", self.stop_hotkey)
             self.settings.setValue("shared_hotkey", self.shared_hotkey)
             self.settings.sync()
+            self.install_hotkeys()
             self.update_shortcut_label()
             self.status.setText("设置已保存")
+        else:
+            self.install_hotkeys()
 
-        self.install_hotkeys()
-
-    @Slot()
     def toggle_record(self):
         if self.recorder.recording:
             self.stop_recording()
-        elif not self._record_start_pending:
+        else:
             self.start_recording()
 
     def start_recording(self):
@@ -407,39 +352,30 @@ class MainWindow(QMainWindow):
         self.events.clear()
         self.list.clear()
         self.progress.setValue(0)
-        self._record_start_pending = True
+        self.recorder.stop()
         self.status.setText("准备录制……")
         self.update_ui()
-
-        # 延迟启动底层鼠标监听，让“开始录制”按钮本身的按下/释放事件完全结束。
         QTimer.singleShot(150, self._begin_recording)
 
     def _begin_recording(self):
-        if not self._record_start_pending:
+        if self.recorder.recording:
             return
-        self._record_start_pending = False
         self.recorder.start()
         self.status.setText("正在录制……")
         self.update_ui()
 
     def stop_recording(self):
-        self._record_start_pending = False
         self.recorder.stop()
         self.status.setText(f"录制结束，共 {len(self.events)} 个操作")
         self.update_ui()
 
-    @Slot()
     def stop_all(self):
-        self._record_start_pending = False
         if self.recorder.recording:
             self.stop_recording()
         self.player.stop()
         self.update_ui()
 
-    @Slot()
     def play(self):
-        if self._record_start_pending:
-            self._record_start_pending = False
         if self.recorder.recording:
             self.stop_recording()
         if not self.events:
@@ -459,19 +395,14 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_hotkey(self, key: str):
-        if key == "record_toggle":
-            self.toggle_record()
+        if key == "record_toggle": self.toggle_record()
         elif key == "record_start":
-            if not self.recorder.recording and not self._record_start_pending:
-                self.start_recording()
+            if not self.recorder.recording: self.start_recording()
         elif key == "record_stop":
-            if self.recorder.recording or self._record_start_pending:
-                self.stop_recording()
+            if self.recorder.recording: self.stop_recording()
         elif key == "f9":
-            if self.player.running:
-                self.player.toggle_pause()
-            else:
-                self.play()
+            if self.player.running: self.player.toggle_pause()
+            else: self.play()
         elif key == "f10":
             self.stop_all()
             self.status.setText("已紧急停止")
@@ -486,14 +417,19 @@ class MainWindow(QMainWindow):
         self.status.setText(state)
         self.update_ui()
 
+    def update_shortcut_label(self):
+        mode = self.record_hotkey if self.shared_hotkey else f"开始 {self.record_hotkey} / 结束 {self.stop_hotkey}"
+        self.hotkey_label.setText(f"录制快捷键：{mode}  ·  F9 播放/暂停  ·  F10 停止")
+
     def update_ui(self):
-        recording = self.recorder.recording or self._record_start_pending
+        recording = self.recorder.recording
         playing = self.player.running
         self.record_btn.setText("■  停止录制" if recording else "●  开始录制")
         self.play_btn.setEnabled(not recording and not playing and bool(self.events))
         self.pause_btn.setEnabled(playing)
         self.stop_btn.setEnabled(playing or recording)
         self.clear_btn.setEnabled(not recording and not playing)
+        self.update_shortcut_label()
 
     def clear_events(self):
         self.events.clear()
@@ -504,8 +440,7 @@ class MainWindow(QMainWindow):
 
     def save(self):
         path, _ = QFileDialog.getSaveFileName(self, "保存宏", "macro.json", "Macro JSON (*.json)")
-        if not path:
-            return
+        if not path: return
         try:
             save_macro(path, self.events)
             self.current_file = path
@@ -516,8 +451,7 @@ class MainWindow(QMainWindow):
 
     def load(self):
         path, _ = QFileDialog.getOpenFileName(self, "加载宏", "", "Macro JSON (*.json)")
-        if not path:
-            return
+        if not path: return
         try:
             self.events = load_macro(path)
             self.list.clear()
@@ -534,24 +468,17 @@ class MainWindow(QMainWindow):
     @staticmethod
     def format_event(event: MacroEvent) -> str:
         data = event.data
-        if event.type == "mouse_move":
-            detail = f"鼠标移动  →  ({data['x']}, {data['y']})"
-        elif event.type == "mouse_click":
-            detail = f"鼠标 {data['button']} {'按下' if data['pressed'] else '释放'}  →  ({data['x']}, {data['y']})"
-        elif event.type == "mouse_scroll":
-            detail = f"鼠标滚轮  →  ({data['dx']}, {data['dy']})"
-        elif event.type == "key_down":
-            detail = f"键盘按下  →  {data['key']}"
-        else:
-            detail = f"键盘释放  →  {data['key']}"
+        if event.type == "mouse_move": detail = f"鼠标移动  →  ({data['x']}, {data['y']})"
+        elif event.type == "mouse_click": detail = f"鼠标 {data['button']} {'按下' if data['pressed'] else '释放'}  →  ({data['x']}, {data['y']})"
+        elif event.type == "mouse_scroll": detail = f"鼠标滚轮  →  ({data['dx']}, {data['dy']})"
+        elif event.type == "key_down": detail = f"键盘按下  →  {data['key']}"
+        else: detail = f"键盘释放  →  {data['key']}"
         return f"+{event.delay * 1000:8.1f} ms    {detail}"
 
     def closeEvent(self, event):
-        self._record_start_pending = False
         self.recorder.stop()
         self.player.stop()
-        if self.hotkey_listener:
-            self.hotkey_listener.stop()
+        if self.hotkey_listener: self.hotkey_listener.stop()
         event.accept()
 
 
