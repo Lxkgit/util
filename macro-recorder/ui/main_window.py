@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
         controls.setContentsMargins(14, 12, 14, 12)
         self.record_btn = QPushButton("●  开始录制")
         self.play_btn = QPushButton("▶  播放")
-        self.pause_btn = QPushButton("Ⅱ  暂停")
+        self.pause_btn = QPushButton("Ⅱ  暂停播放")
         self.stop_btn = QPushButton("■  停止")
         self.clear_btn = QPushButton("清空")
         self.record_btn.clicked.connect(self.toggle_record)
@@ -194,9 +194,20 @@ class MainWindow(QMainWindow):
 
     def toggle_record(self):
         if self.recorder.recording:
-            self.stop_recording()
+            self.toggle_record_pause()
         else:
             self.start_recording()
+
+    def toggle_record_pause(self):
+        if not self.recorder.recording:
+            return
+        if self.recorder.paused:
+            self.recorder.resume()
+            self.status.setText(self._recording_text())
+        else:
+            self.recorder.pause()
+            self.status.setText("录制已暂停")
+        self._refresh()
 
     def start_recording(self):
         if self.player.running:
@@ -383,7 +394,10 @@ class MainWindow(QMainWindow):
     def _refresh(self):
         recording = self.recorder.recording
         playing = self.player.running
-        self.record_btn.setText("■  停止录制" if recording else "●  开始录制")
+        if recording:
+            self.record_btn.setText("Ⅱ  继续录制" if self.recorder.paused else "Ⅱ  暂停录制")
+        else:
+            self.record_btn.setText("●  开始录制")
         self.play_btn.setEnabled(not playing and not recording)
         self.pause_btn.setEnabled(playing)
         self.stop_btn.setEnabled(recording or playing or self._pending)
