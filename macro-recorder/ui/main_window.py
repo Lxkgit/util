@@ -49,13 +49,22 @@ class MainWindow(QMainWindow):
 
         settings = QSettings("Lxkgit", "MacroRecorder")
         self.record_hotkey = str(settings.value("record_hotkey", "F8"))
-        self.stop_hotkey = str(settings.value("stop_hotkey", "Shift+F8"))
+        self.stop_hotkey = str(settings.value("stop_hotkey", "F9"))
         self.shared_hotkey = False
-        self.play_pause_hotkey = str(settings.value("play_pause_hotkey", "F9"))
-        self.stop_playback_hotkey = str(settings.value("stop_playback_hotkey", "F10"))
+        self.play_pause_hotkey = str(settings.value("play_pause_hotkey", "F10"))
+        self.stop_playback_hotkey = str(settings.value("stop_playback_hotkey", "F11"))
 
-        if settings.value("shared_hotkey", False, type=bool) or self.stop_hotkey.lower().replace(" ", "") == self.record_hotkey.lower().replace(" ", ""):
-            self.stop_hotkey = "Shift+F8"
+        old_defaults = (
+            self.record_hotkey.lower().replace(" ", "") == "f8"
+            and self.stop_hotkey.lower().replace(" ", "") == "shift+f8"
+            and self.play_pause_hotkey.lower().replace(" ", "") == "f9"
+            and self.stop_playback_hotkey.lower().replace(" ", "") == "f10"
+        )
+        if settings.value("shared_hotkey", False, type=bool) or old_defaults:
+            self.record_hotkey = "F8"
+            self.stop_hotkey = "F9"
+            self.play_pause_hotkey = "F10"
+            self.stop_playback_hotkey = "F11"
 
         self.recorder = MacroRecorder(self.event_signal.emit)
         self.player = MacroPlayer(self.progress_signal.emit, self.state_signal.emit)
@@ -406,12 +415,6 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(recording or playing or self._pending)
         self.clear_btn.setEnabled(not recording and not playing and not self._pending)
         self.hotkey_label.setText(
-            f"录制：{self.record_hotkey}  |  结束录制：{self.stop_hotkey}  |  播放/暂停：{self.play_pause_hotkey}  |  结束播放：{self.stop_playback_hotkey}"
+            f"录制：{self.record_hotkey}  |  结束录制：{self.stop_hotkey}  |  "
+            f"播放/暂停：{self.play_pause_hotkey}  |  结束播放：{self.stop_playback_hotkey}"
         )
-
-    def closeEvent(self, event):
-        self._pending = False
-        self._remove_hotkeys()
-        self.recorder.stop()
-        self.player.stop()
-        event.accept()
