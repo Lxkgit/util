@@ -17,10 +17,15 @@ class MacroRecorder:
         self._mouse_listener = None
         self._lock = Lock()
         self._pressed_keys: set[str] = set()
+        self._ignored_keys: set[str] = set()
         self._last_move_time = 0.0
         self._last_move_pos: tuple[int, int] | None = None
         self.move_interval = 0.03
         self.move_distance = 3
+
+    def set_ignored_keys(self, keys: set[str]):
+        with self._lock:
+            self._ignored_keys = set(keys)
 
     def start(self):
         self.stop()
@@ -46,7 +51,6 @@ class MacroRecorder:
 
     def stop(self):
         with self._lock:
-            was_recording = self.recording
             self.recording = False
             self._pressed_keys.clear()
             self._last_move_pos = None
@@ -82,7 +86,7 @@ class MacroRecorder:
     def _on_key_press(self, key):
         name = self._key_name(key)
         with self._lock:
-            if not self.recording or name in self._pressed_keys:
+            if not self.recording or name in self._ignored_keys or name in self._pressed_keys:
                 return
             self._pressed_keys.add(name)
         self._add("key_down", {"key": name})
@@ -90,6 +94,8 @@ class MacroRecorder:
     def _on_key_release(self, key):
         name = self._key_name(key)
         with self._lock:
+            if name in self._ignored_keys:
+                return
             if not self.recording:
                 return
             self._pressed_keys.discard(name)
