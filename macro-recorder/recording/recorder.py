@@ -13,6 +13,7 @@ class MacroRecorder:
     def __init__(self, on_event=None):
         self.on_event = on_event
         self.recording = False
+        self.paused = False
         self.mode = "all"
         self._lock = Lock()
         self._last_time = 0.0
@@ -40,6 +41,7 @@ class MacroRecorder:
         self.stop()
         with self._lock:
             self.recording = True
+            self.paused = False
             self._last_time = time.perf_counter()
             self._last_move_time = self._last_time
             self._last_move_pos = None
@@ -62,9 +64,36 @@ class MacroRecorder:
             self._mouse_listener.daemon = True
             self._mouse_listener.start()
 
+    def pause(self):
+        with self._lock:
+            if not self.recording:
+                return False
+            self.paused = True
+            self._pressed_keys.clear()
+        return True
+
+    def resume(self):
+        with self._lock:
+            if not self.recording:
+                return False
+            self.paused = False
+            self._last_time = time.perf_counter()
+            self._last_move_time = self._last_time
+            self._last_move_pos = None
+            self._pressed_keys.clear()
+        return True
+
+    def toggle_pause(self):
+        with self._lock:
+            if not self.recording:
+                return False
+            paused = self.paused
+        return self.resume() if paused else self.pause()
+
     def stop(self):
         with self._lock:
             self.recording = False
+            self.paused = False
             self._pressed_keys.clear()
             self._last_move_pos = None
 
@@ -100,7 +129,7 @@ class MacroRecorder:
 
     def _add(self, event_type: str, data: dict):
         with self._lock:
-            if not self.recording:
+            if not self.recording or self.paused:
                 return
             now = time.perf_counter()
             event = MacroEvent(event_type, max(0.0, now - self._last_time), data)
@@ -112,7 +141,7 @@ class MacroRecorder:
     def _on_key_press(self, key):
         name = self._key_name(key)
         with self._lock:
-            if not self.recording or name in self._ignored_keys or name in self._pressed_keys:
+            if not self.recording or self.paused or name in self._ignored_keys or name in self._pressed_keys:
                 return
             self._pressed_keys.add(name)
         self._add("key_down", {"key": name})
@@ -120,7 +149,7 @@ class MacroRecorder:
     def _on_key_release(self, key):
         name = self._key_name(key)
         with self._lock:
-            if not self.recording or name in self._ignored_keys:
+            if not self.recording or self.paused or name in self._ignored_keys:
                 return
             self._pressed_keys.discard(name)
         self._add("key_up", {"key": name})
@@ -128,7 +157,7 @@ class MacroRecorder:
     def _on_move(self, x, y):
         now = time.perf_counter()
         with self._lock:
-            if not self.recording:
+            if not self.recording or self.paused:
                 return
             last = self._last_move_pos
             if last is not None:
