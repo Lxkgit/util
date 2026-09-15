@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.model import MacroEvent, load_macro, save_macro
+from core.model import load_macro, save_macro
 from core.player import MacroPlayer
 from recording.recorder import MacroRecorder
 from services.hotkeys import HotkeyService
@@ -42,11 +42,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("键盘鼠标宏录制器")
         self.resize(1000, 720)
-
         self.events = []
         self.current_file = ""
         self.record_mode = "all"
         self._pending = False
+        self._countdown_remaining = 0
+        self._countdown_timer = QTimer(self)
+        self._countdown_timer.timeout.connect(self._countdown_tick)
 
         settings = QSettings("Lxkgit", "MacroRecorder")
         self.record_hotkey = str(settings.value("record_hotkey", "F8"))
@@ -54,6 +56,7 @@ class MainWindow(QMainWindow):
         self.shared_hotkey = False
         self.play_pause_hotkey = str(settings.value("play_pause_hotkey", "F10"))
         self.stop_playback_hotkey = str(settings.value("stop_playback_hotkey", "F11"))
+        self.record_countdown = int(settings.value("record_countdown", 3))
 
         old_defaults = (
             self.record_hotkey.lower().replace(" ", "") == "f8"
@@ -70,7 +73,6 @@ class MainWindow(QMainWindow):
         self.recorder = MacroRecorder(self.event_signal.emit)
         self.player = MacroPlayer(self.progress_signal.emit, self.state_signal.emit)
         self.hotkeys = HotkeyService(self.action_signal.emit)
-
         self._build_ui()
         self.event_signal.connect(self._on_event)
         self.action_signal.connect(self._on_action)
@@ -98,7 +100,6 @@ class MainWindow(QMainWindow):
             "QSpinBox{min-height:34px;border:1px solid #dcdfe6;border-radius:6px;padding:0 8px;}"
             "QProgressBar{height:8px;border:0;border-radius:4px;background:#e9edf2;}"
         )
-
         layout = QVBoxLayout(root)
         layout.setContentsMargins(22, 18, 22, 18)
         layout.setSpacing(14)
@@ -112,7 +113,6 @@ class MainWindow(QMainWindow):
         box.addWidget(title)
         box.addWidget(sub)
         head.addLayout(box, 1)
-
         setting = QPushButton("⚙  设置")
         setting.clicked.connect(self.open_settings)
         head.addWidget(setting)
@@ -214,7 +214,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
     def select_mode(self, mode):
-        if self.recorder.recording or self.player.running:
+        if self.recorder.recording or self.player.running or self._pending:
             return
         self.record_mode = mode
         for name, card in self.mode_cards.items():
@@ -225,7 +225,9 @@ class MainWindow(QMainWindow):
         self.status.setText({"all": "已选择：键盘 + 鼠标", "keyboard": "已选择：仅键盘", "mouse": "已选择：仅鼠标"}[mode])
 
     def toggle_record(self):
-        if self.recorder.recording:
+        if self._pending:
+            self.cancel_record_countdown()
+        elif self.recorder.recording:
             self.toggle_record_pause()
         else:
             self.start_recording()
@@ -249,9 +251,31 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.recorder.stop()
         self._pending = True
-        self.status.setText("准备录制……")
+        if self.record_countdown <= 0:
+            self._begin_recording()
+            return
+        self._countdown_remaining = self.record_countdown
+        self.status.setText(f"准备录制：{self._countdown_remaining}")
         self._refresh()
-        QTimer.singleShot(150, self._begin_recording)
+        self._countdown_timer.start(1000)
+
+    def _countdown_tick(self):
+        if not self._pending:
+            self._countdown_timer.stop()
+            return
+        self._countdown_remaining -= 1
+        if self._countdown_remaining <= 0:
+            self._countdown_timer.stop()
+            self._begin_recording()
+            return
+        self.status.setText(f"准备录制：{self._countdown_remaining}")
+
+    def cancel_record_countdown(self):
+        self._countdown_timer.stop()
+        self._pending = False
+        self._countdown_remaining = 0
+        self.status.setText("已取消录制")
+        self._refresh()
 
     def _begin_recording(self):
         if not self._pending or self.recorder.recording:
@@ -265,12 +289,14 @@ class MainWindow(QMainWindow):
         return {"all": "正在录制：键盘 + 鼠标", "keyboard": "正在录制：仅键盘", "mouse": "正在录制：仅鼠标"}[self.record_mode]
 
     def stop_recording(self):
+        self._countdown_timer.stop()
         self._pending = False
         self.recorder.stop()
         self.status.setText(f"录制结束，共 {len(self.events)} 个操作")
         self._refresh()
 
     def stop_all(self):
+        self._countdown_timer.stop()
         self._pending = False
         self.recorder.stop()
         self.player.stop()
@@ -301,10 +327,13 @@ class MainWindow(QMainWindow):
     def _on_action(self, action):
         if action == "record_toggle":
             self.toggle_record()
-        elif action == "record_start" and not self.recorder.recording:
+        elif action == "record_start" and not self.recorder.recording and not self._pending:
             self.start_recording()
-        elif action == "record_stop" and self.recorder.recording:
-            self.stop_recording()
+        elif action == "record_stop":
+            if self._pending:
+                self.cancel_record_countdown()
+            elif self.recorder.recording:
+                self.stop_recording()
         elif action == "play_pause":
             if self.player.running:
                 self.player.toggle_pause()
@@ -343,6 +372,8 @@ class MainWindow(QMainWindow):
     def open_settings(self):
         if self.recorder.recording:
             self.stop_recording()
+        if self._pending:
+            self.cancel_record_countdown()
         self._remove_hotkeys()
         dialog = SettingsDialog(
             self.record_hotkey,
@@ -350,6 +381,7 @@ class MainWindow(QMainWindow):
             self.shared_hotkey,
             self.play_pause_hotkey,
             self.stop_playback_hotkey,
+            self.record_countdown,
             self,
         )
         if dialog.exec():
@@ -358,17 +390,75 @@ class MainWindow(QMainWindow):
             self.shared_hotkey = False
             self.play_pause_hotkey = dialog.play_pause_hotkey
             self.stop_playback_hotkey = dialog.stop_playback_hotkey
+            self.record_countdown = dialog.countdown
             settings = QSettings("Lxkgit", "MacroRecorder")
             settings.setValue("record_hotkey", self.record_hotkey)
             settings.setValue("stop_hotkey", self.stop_hotkey)
             settings.setValue("shared_hotkey", False)
             settings.setValue("play_pause_hotkey", self.play_pause_hotkey)
             settings.setValue("stop_playback_hotkey", self.stop_playback_hotkey)
+            settings.setValue("record_countdown", self.record_countdown)
             settings.sync()
             self._install_hotkeys()
             self.status.setText("设置已保存")
         else:
             self._install_hotkeys()
+
+    def _selected_index(self):
+        return self.list.currentRow()
+
+    def _can_edit(self):
+        return not self.recorder.recording and not self.player.running and not self._pending
+
+    def _has_selected_event(self):
+        return 0 <= self._selected_index() < len(self.events)
+
+    def edit_selected_event(self):
+        if not self._can_edit() or not self._has_selected_event():
+            return
+        index = self._selected_index()
+        dialog = EventEditorDialog(self.events[index], self)
+        if dialog.exec():
+            self.events[index] = dialog.event
+            self.list.item(index).setText(self.format_event(dialog.event))
+            self.status.setText("事件已修改")
+            self._refresh()
+
+    def duplicate_selected_event(self):
+        if not self._can_edit() or not self._has_selected_event():
+            return
+        index = self._selected_index()
+        self.events.insert(index + 1, self.events[index])
+        self._reload_event_list(index + 1)
+        self.status.setText("事件已复制")
+
+    def move_selected_event(self, direction):
+        if not self._can_edit() or not self._has_selected_event():
+            return
+        index = self._selected_index()
+        target = index + direction
+        if target < 0 or target >= len(self.events):
+            return
+        self.events[index], self.events[target] = self.events[target], self.events[index]
+        self._reload_event_list(target)
+        self.status.setText("事件已上移" if direction < 0 else "事件已下移")
+
+    def delete_selected_event(self):
+        if not self._can_edit() or not self._has_selected_event():
+            return
+        index = self._selected_index()
+        del self.events[index]
+        target = min(index, len(self.events) - 1)
+        self._reload_event_list(target if target >= 0 else None)
+        self.status.setText("事件已删除")
+
+    def _reload_event_list(self, selected_index=None):
+        self.list.clear()
+        for event in self.events:
+            self.list.addItem(self.format_event(event))
+        if selected_index is not None and 0 <= selected_index < self.list.count():
+            self.list.setCurrentRow(selected_index)
+        self._refresh()
 
     def save(self):
         path, _ = QFileDialog.getSaveFileName(self, "保存宏", "macro.json", "Macro JSON (*.json)")
@@ -388,9 +478,7 @@ class MainWindow(QMainWindow):
             return
         try:
             self.events = load_macro(path)
-            self.list.clear()
-            for event in self.events:
-                self.list.addItem(self.format_event(event))
+            self._reload_event_list()
             self.current_file = path
             self.file_label.setText(os.path.basename(path))
             self.status.setText(f"加载成功，共 {len(self.events)} 个操作")
@@ -399,7 +487,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "加载失败", str(exc))
 
     def clear_events(self):
-        if self.recorder.recording or self.player.running:
+        if self.recorder.recording or self.player.running or self._pending:
             return
         self.events.clear()
         self.list.clear()
@@ -407,66 +495,6 @@ class MainWindow(QMainWindow):
         self.file_label.setText("尚未保存")
         self.progress.setValue(0)
         self.status.setText("已清空")
-        self._refresh()
-
-    def _selected_index(self):
-        item = self.list.currentItem()
-        return self.list.row(item) if item is not None else -1
-
-    def _refresh_list(self, selected_index: int = -1):
-        self.list.clear()
-        for event in self.events:
-            self.list.addItem(self.format_event(event))
-        if 0 <= selected_index < self.list.count():
-            self.list.setCurrentRow(selected_index)
-
-    def edit_selected_event(self):
-        if self.recorder.recording or self.player.running:
-            return
-        index = self._selected_index()
-        if index < 0:
-            return
-        dialog = EventEditorDialog(self.events[index], self)
-        if dialog.exec():
-            self._refresh_list(index)
-            self.status.setText(f"已修改第 {index + 1} 个操作")
-            self._refresh()
-
-    def duplicate_selected_event(self):
-        if self.recorder.recording or self.player.running:
-            return
-        index = self._selected_index()
-        if index < 0:
-            return
-        event = self.events[index]
-        copied = MacroEvent(event.type, event.delay, dict(event.data))
-        self.events.insert(index + 1, copied)
-        self._refresh_list(index + 1)
-        self.status.setText(f"已复制第 {index + 1} 个操作")
-        self._refresh()
-
-    def move_selected_event(self, offset: int):
-        if self.recorder.recording or self.player.running:
-            return
-        index = self._selected_index()
-        target = index + offset
-        if index < 0 or target < 0 or target >= len(self.events):
-            return
-        self.events[index], self.events[target] = self.events[target], self.events[index]
-        self._refresh_list(target)
-        self.status.setText(f"已移动到第 {target + 1} 个操作")
-        self._refresh()
-
-    def delete_selected_event(self):
-        if self.recorder.recording or self.player.running:
-            return
-        index = self._selected_index()
-        if index < 0:
-            return
-        self.events.pop(index)
-        selected = min(index, len(self.events) - 1)
-        self._refresh_list(selected)
-        self.status.setText(f"已删除第 {index + 1} 个操作")
         self._refresh()
 
     @staticmethod
@@ -486,27 +514,26 @@ class MainWindow(QMainWindow):
     def _refresh(self):
         recording = self.recorder.recording
         playing = self.player.running
-        if recording:
+        if self._pending:
+            self.record_btn.setText("Ⅱ  取消录制")
+        elif recording:
             self.record_btn.setText("Ⅱ  继续录制" if self.recorder.paused else "Ⅱ  暂停录制")
         else:
             self.record_btn.setText("●  开始录制")
-        self.play_btn.setEnabled(not playing and not recording)
+        self.play_btn.setEnabled(not playing and not recording and not self._pending)
         self.pause_btn.setEnabled(playing)
         self.stop_btn.setEnabled(recording or playing or self._pending)
         self.clear_btn.setEnabled(not recording and not playing and not self._pending)
-        editing_enabled = not recording and not playing and not self._pending and bool(self.events)
-        selected = self._selected_index()
-        self.edit_button.setEnabled(editing_enabled and selected >= 0)
-        self.duplicate_button.setEnabled(editing_enabled and selected >= 0)
-        self.up_button.setEnabled(editing_enabled and selected > 0)
-        self.down_button.setEnabled(editing_enabled and 0 <= selected < len(self.events) - 1)
-        self.delete_button.setEnabled(editing_enabled and selected >= 0)
+        editable = self._can_edit() and self._has_selected_event()
+        for widget in (self.edit_button, self.duplicate_button, self.up_button, self.down_button, self.delete_button):
+            widget.setEnabled(editable)
         self.hotkey_label.setText(
             f"录制：{self.record_hotkey}  |  结束录制：{self.stop_hotkey}  |  "
             f"播放/暂停：{self.play_pause_hotkey}  |  结束播放：{self.stop_playback_hotkey}"
         )
 
     def closeEvent(self, event):
+        self._countdown_timer.stop()
         self._pending = False
         self._remove_hotkeys()
         self.recorder.stop()
