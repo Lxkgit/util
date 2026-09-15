@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from PySide6.QtCore import QObject, Signal, Slot, QSettings, QTimer
+from PySide6.QtCore import QObject, Signal, Slot, QSettings, QTimer, Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QDialog, QDialogButtonBox, QFormLayout,
@@ -33,25 +33,20 @@ class SettingsDialog(QDialog):
         self.start_hotkey = start_hotkey
         self.stop_hotkey = stop_hotkey
         self.shared = shared
-
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-
         self.menu = QListWidget()
         self.menu.setObjectName("settingsMenu")
         self.menu.setFixedWidth(160)
         self.menu.addItems(["快捷键", "录制", "播放"])
         root.addWidget(self.menu)
-
         right = QVBoxLayout()
         right.setContentsMargins(24, 20, 24, 20)
         root.addLayout(right, 1)
-
         title = QLabel("设置")
         title.setStyleSheet("font-size: 24px; font-weight: 700;")
         right.addWidget(title)
-
         self.pages = QStackedWidget()
         right.addWidget(self.pages, 1)
         self.pages.addWidget(self._shortcut_page())
@@ -59,12 +54,10 @@ class SettingsDialog(QDialog):
         self.pages.addWidget(self._play_page())
         self.menu.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.menu.setCurrentRow(0)
-
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         right.addWidget(buttons)
-
         self.setStyleSheet("""
             QDialog { background: #f5f7fa; }
             QListWidget#settingsMenu { background: #eef2f7; border: 0; padding: 12px 8px; outline: 0; }
@@ -244,8 +237,9 @@ class MainWindow(QMainWindow):
             QMainWindow { background: #f5f7fa; }
             QPushButton { min-height: 38px; padding: 0 18px; border: 1px solid #dcdfe6; border-radius: 7px; background: white; }
             QPushButton:hover { background: #f2f6fc; }
-            QListWidget#eventList { background: white; border: 1px solid #e4e7ed; border-radius: 10px; padding: 6px; }
-            QListWidget#eventList::item { padding: 9px 10px; border-bottom: 1px solid #f0f2f5; }
+            QListWidget#eventList { background: white; border: 1px solid #e4e7ed; border-radius: 10px; padding: 6px; color: #303133; selection-color: #303133; selection-background-color: #eaf2ff; }
+            QListWidget#eventList::item { padding: 9px 10px; border-bottom: 1px solid #f0f2f5; color: #303133; }
+            QListWidget#eventList::item:selected { color: #303133; background: #eaf2ff; }
             QFrame#panel { background: white; border: 1px solid #e4e7ed; border-radius: 12px; }
             QFrame#settingCard { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; }
             QSpinBox { min-height: 34px; border: 1px solid #dcdfe6; border-radius: 6px; padding: 0 8px; }
@@ -302,6 +296,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.progress)
         self.list = QListWidget()
         self.list.setObjectName("eventList")
+        self.list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         layout.addWidget(self.list, 1)
         bottom = QHBoxLayout()
         self.file_label = QLabel("尚未保存")
