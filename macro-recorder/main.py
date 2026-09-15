@@ -1,0 +1,249 @@
+from __future__ import annotations
+
+import os
+import sys
+from PySide6.QtCore import QObject, Signal, Slot, Qt
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
+    QApplication, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+    QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
+    QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget
+)
+from pynput import keyboard
+
+from model import MacroEvent, load_macro, save_macro
+from player import MacroPlayer
+from recorder import MacroRecorder
+
+
+class Bridge(QObject):
+    recorded = Signal(object)
+    hotkey = Signal(str)
+    progress = Signal(int, int)
+    state = Signal(str)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Macro Recorder")
+        self.resize(900, 620)
+        self.bridge = Bridge()
+        self.events: list[MacroEvent] = []
+        self.current_file = ""
+
+        self.recorder = MacroRecorder(on_event=self.bridge.recorded.emit)
+        self.player = MacroPlayer(
+            on_progress=self.bridge.progress.emit,
+            on_state=self.bridge.state.emit,
+        )
+        self.hotkey_listener = keyboard.GlobalHotKeys({
+            "<f8>": lambda: self.bridge.hotkey.emit("f8"),
+            "<f9>": lambda: self.bridge.hotkey.emit("f9"),
+            "<f10>": lambda: self.bridge.hotkey.emit("f10"),
+        })
+        self.hotkey_listener.start()
+
+        self._build_ui()
+        self.bridge.recorded.connect(self.on_recorded)
+        self.bridge.hotkey.connect(self.on_hotkey)
+        self.bridge.progress.connect(self.on_progress)
+        self.bridge.state.connect(self.on_state)
+        self.update_ui()
+
+    def _build_ui(self):
+        root = QWidget()
+        root.setStyleSheet("""
+            QWidget { font-size: 14px; }
+            QGroupBox { font-weight: 600; margin-top: 10px; }
+            QPushButton { min-height: 34px; padding: 0 16px; }
+            QListWidget { background: #fafafa; border: 1px solid #ddd; }
+            QLineEdit, QSpinBox { min-height: 32px; }
+        """)
+        layout = QVBoxLayout(root)
+
+        title = QLabel("键盘鼠标宏录制器")
+        title.setStyleSheet("font-size: 24px; font-weight: 700; padding: 8px 0;")
+        layout.addWidget(title)
+
+        controls = QHBoxLayout()
+        self.record_btn = QPushButton("● 开始录制")
+        self.record_btn.clicked.connect(self.toggle_record)
+        self.play_btn = QPushButton("▶ 播放")
+        self.play_btn.clicked.connect(self.play)
+        self.pause_btn = QPushButton("Ⅱ 暂停")
+        self.pause_btn.clicked.connect(self.player.toggle_pause)
+        self.stop_btn = QPushButton("■ 停止")
+        self.stop_btn.clicked.connect(self.player.stop)
+        self.clear_btn = QPushButton("清空")
+        self.clear_btn.clicked.connect(self.clear_events)
+        for button in (self.record_btn, self.play_btn, self.pause_btn, self.stop_btn, self.clear_btn):
+            controls.addWidget(button)
+        layout.addLayout(controls)
+
+        settings = QGroupBox("播放设置")
+        form = QFormLayout(settings)
+        self.repeat = QSpinBox()
+        self.repeat.setRange(0, 999999)
+        self.repeat.setValue(1)
+        self.repeat.setSpecialValueText("无限循环")
+        form.addRow("循环次数", self.repeat)
+        layout.addWidget(settings)
+
+        self.status = QLabel("就绪")
+        self.status.setStyleSheet("font-weight: 600; padding: 4px;")
+        layout.addWidget(self.status)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        layout.addWidget(self.progress)
+
+        self.list = QListWidget()
+        layout.addWidget(self.list, 1)
+
+        bottom = QHBoxLayout()
+        self.file_label = QLabel("尚未保存")
+        bottom.addWidget(self.file_label, 1)
+        save_btn = QPushButton("保存")
+        save_btn.clicked.connect(self.save)
+        load_btn = QPushButton("加载")
+        load_btn.clicked.connect(self.load)
+        bottom.addWidget(save_btn)
+        bottom.addWidget(load_btn)
+        layout.addLayout(bottom)
+
+        shortcuts = QLabel("全局快捷键：F8 录制/停止   F9 播放/暂停   F10 紧急停止")
+        shortcuts.setStyleSheet("color: #777; padding-top: 4px;")
+        layout.addWidget(shortcuts)
+        self.setCentralWidget(root)
+
+    @Slot()
+    def toggle_record(self):
+        if self.recorder.recording:
+            self.recorder.stop()
+            self.status.setText(f"录制结束，共 {len(self.events)} 个操作")
+        else:
+            if self.player.running:
+                self.player.stop()
+            self.events.clear()
+            self.list.clear()
+            self.progress.setValue(0)
+            self.recorder.start()
+            self.status.setText("正在录制……")
+        self.update_ui()
+
+    @Slot()
+    def play(self):
+        if self.recorder.recording:
+            self.recorder.stop()
+        if not self.events:
+            QMessageBox.information(self, "提示", "没有可播放的操作，请先录制或加载宏。")
+            return
+        if not self.player.play(self.events, self.repeat.value()):
+            return
+        self.status.setText("播放中")
+        self.update_ui()
+
+    @Slot(object)
+    def on_recorded(self, event: MacroEvent):
+        self.events.append(event)
+        self.list.addItem(self.format_event(event))
+        self.list.scrollToBottom()
+
+    @Slot(str)
+    def on_hotkey(self, key: str):
+        if key == "f8":
+            self.toggle_record()
+        elif key == "f9":
+            if self.player.running:
+                self.player.toggle_pause()
+            else:
+                self.play()
+        elif key == "f10":
+            self.player.stop()
+            if self.recorder.recording:
+                self.recorder.stop()
+            self.status.setText("已紧急停止")
+            self.update_ui()
+
+    @Slot(int, int)
+    def on_progress(self, current: int, total: int):
+        self.progress.setValue(int(current * 100 / total) if total else 0)
+
+    @Slot(str)
+    def on_state(self, state: str):
+        self.status.setText(state)
+        self.update_ui()
+
+    def update_ui(self):
+        recording = self.recorder.recording
+        playing = self.player.running
+        self.record_btn.setText("■ 停止录制" if recording else "● 开始录制")
+        self.play_btn.setEnabled(not recording and not playing and bool(self.events))
+        self.pause_btn.setEnabled(playing)
+        self.stop_btn.setEnabled(playing or recording)
+        self.clear_btn.setEnabled(not recording and not playing)
+
+    def clear_events(self):
+        self.events.clear()
+        self.list.clear()
+        self.progress.setValue(0)
+        self.status.setText("已清空")
+        self.update_ui()
+
+    def save(self):
+        path, _ = QFileDialog.getSaveFileName(self, "保存宏", "macro.json", "Macro JSON (*.json)")
+        if not path:
+            return
+        try:
+            save_macro(path, self.events)
+            self.current_file = path
+            self.file_label.setText(os.path.basename(path))
+            self.status.setText("保存成功")
+        except Exception as exc:
+            QMessageBox.critical(self, "保存失败", str(exc))
+
+    def load(self):
+        path, _ = QFileDialog.getOpenFileName(self, "加载宏", "", "Macro JSON (*.json)")
+        if not path:
+            return
+        try:
+            self.events = load_macro(path)
+            self.list.clear()
+            for event in self.events:
+                self.list.addItem(self.format_event(event))
+            self.current_file = path
+            self.file_label.setText(os.path.basename(path))
+            self.progress.setValue(0)
+            self.status.setText(f"加载成功，共 {len(self.events)} 个操作")
+            self.update_ui()
+        except Exception as exc:
+            QMessageBox.critical(self, "加载失败", str(exc))
+
+    @staticmethod
+    def format_event(event: MacroEvent) -> str:
+        data = event.data
+        if event.type == "mouse_move":
+            detail = f"鼠标移动 → ({data['x']}, {data['y']})"
+        elif event.type == "mouse_click":
+            detail = f"鼠标 {data['button']} {'按下' if data['pressed'] else '释放'} → ({data['x']}, {data['y']})"
+        elif event.type == "mouse_scroll":
+            detail = f"鼠标滚轮 → ({data['dx']}, {data['dy']})"
+        elif event.type == "key_down":
+            detail = f"键盘按下 → {data['key']}"
+        else:
+            detail = f"键盘释放 → {data['key']}"
+        return f"+{event.delay * 1000:8.1f} ms    {detail}"
+
+    def closeEvent(self, event):
+        self.recorder.stop()
+        self.player.stop()
+        self.hotkey_listener.stop()
+        event.accept()
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
