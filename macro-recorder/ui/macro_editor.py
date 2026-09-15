@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Qt, QRect
+from PySide6.QtCore import QRect, Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -16,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from core.model import MacroEvent
@@ -23,52 +23,116 @@ from ui.event_editor import EventEditorDialog
 
 
 class PointPicker(QDialog):
+    """只捕获屏幕坐标，不向目标窗口发送任何鼠标操作。"""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.point: tuple[int, int] | None = None
+        self._selected: tuple[int, int] | None = None
+        self._screen_geometry = QGuiApplication.primaryScreen().geometry() if QGuiApplication.primaryScreen() else QRect(0, 0, 1920, 1080)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
+            | Qt.WindowType.WindowDoesNotAcceptFocus
         )
-        self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        screen = QGuiApplication.primaryScreen()
-        self._screen_geometry = screen.geometry() if screen else QRect(0, 0, 1920, 1080)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setGeometry(self._screen_geometry)
         self.setCursor(Qt.CursorShape.CrossCursor)
+        self._build_ui()
+
+    def _build_ui(self):
+        self.info = QLabel(self)
+        self.info.setText("移动鼠标选择位置 · 左键选择 · Enter 确认 · Esc 取消")
+        self.info.setStyleSheet(
+            "QLabel{background:rgba(20,24,32,225);color:white;padding:10px 16px;"
+            "border-radius:8px;font-size:15px;font-weight:600;}"
+        )
+        self.info.adjustSize()
+        self.info.move(24, 24)
+
+        self.confirm = QPushButton("确认此位置", self)
+        self.confirm.setStyleSheet(
+            "QPushButton{background:#409eff;color:white;border:0;border-radius:7px;"
+            "padding:9px 16px;font-weight:600;}"
+            "QPushButton:disabled{background:#909399;}"
+        )
+        self.confirm.setEnabled(False)
+        self.confirm.clicked.connect(self._confirm)
+        self.confirm.adjustSize()
+        self.confirm.move(24, 74)
+
+        self.cancel = QPushButton("取消", self)
+        self.cancel.setStyleSheet(
+            "QPushButton{background:rgba(255,255,255,235);color:#303133;"
+            "border:1px solid #dcdfe6;border-radius:7px;padding:9px 16px;}"
+        )
+        self.cancel.clicked.connect(self.reject)
+        self.cancel.adjustSize()
+        self.cancel.move(24 + self.confirm.width() + 8, 74)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._selected = None
+        self.point = None
+        self.confirm.setEnabled(False)
+        self._update_position_text(self.mapFromGlobal(QGuiApplication.primaryScreen().availableGeometry().center()))
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
         painter.setPen(QPen(Qt.GlobalColor.red, 2))
-        center = self.mapFromGlobal(self.cursor().pos())
-        painter.drawLine(center.x() - 14, center.y(), center.x() + 14, center.y())
-        painter.drawLine(center.x(), center.y() - 14, center.x(), center.y() + 14)
+        pos = self.mapFromGlobal(QGuiApplication.cursor().pos())
+        painter.drawLine(pos.x() - 16, pos.y(), pos.x() + 16, pos.y())
+        painter.drawLine(pos.x(), pos.y() - 16, pos.x(), pos.y() + 16)
+        painter.setPen(QPen(Qt.GlobalColor.white, 1))
+        painter.drawEllipse(pos.x() - 4, pos.y() - 4, 8, 8)
+        if self._selected:
+            x, y = self._selected
+            selected = self.mapFromGlobal(QGuiApplication.cursor().pos())
+            painter.setPen(QPen(Qt.GlobalColor.green, 2))
+            painter.drawEllipse(selected.x() - 7, selected.y() - 7, 14, 14)
+            painter.drawText(selected.x() + 12, selected.y() - 12, f"({x}, {y})")
         painter.end()
+
+    def mouseMoveEvent(self, event):
+        pos = event.globalPosition().toPoint()
+        self._update_position_text(pos)
+        self.update()
+        super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         pos = event.globalPosition().toPoint()
-        self.hide()
-        answer = QMessageBox.question(
-            self,
-            "确认位置",
-            f"当前选择的位置是：\nX = {pos.x()}\nY = {pos.y()}\n\n确认使用这个位置吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
-            self.point = (pos.x(), pos.y())
-            self.accept()
-        else:
-            self.show()
+        self._selected = (pos.x(), pos.y())
+        self._update_position_text(pos, selected=True)
+        self.confirm.setEnabled(True)
+        self.update()
+        event.accept()
 
     def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self._selected:
+            self._confirm()
+            return
         if event.key() == Qt.Key.Key_Escape:
             self.reject()
+            return
+        super().keyPressEvent(event)
+
+    def _update_position_text(self, pos, selected=False):
+        if selected:
+            self.info.setText(f"已选择：X={pos.x()}  Y={pos.y()} · Enter 确认 · 重新点击可重新选择")
         else:
-            super().keyPressEvent(event)
+            self.info.setText(f"当前：X={pos.x()}  Y={pos.y()} · 左键选择 · Esc 取消")
+        self.info.adjustSize()
+
+    def _confirm(self):
+        if not self._selected:
+            return
+        self.point = self._selected
+        self.accept()
 
 
 class MouseActionDialog(QDialog):
@@ -84,10 +148,7 @@ class MouseActionDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(12)
-        hint = QLabel(
-            "先设置操作参数，然后点击“选择位置”。\n"
-            "程序会进入全屏选点模式，你点击目标位置后会再次确认坐标。"
-        )
+        hint = QLabel("设置参数后选择屏幕位置。选点只记录坐标，不会点击目标窗口。")
         hint.setWordWrap(True)
         root.addWidget(hint)
 
@@ -138,6 +199,8 @@ class MouseActionDialog(QDialog):
         if picker.exec() and picker.point:
             self.point = picker.point
             self.position_label.setText(f"位置：X={picker.point[0]}，Y={picker.point[1]}（已确认）")
+            self.raise_()
+            self.activateWindow()
 
     def confirm(self):
         if not self.point:
@@ -164,6 +227,83 @@ class MouseActionDialog(QDialog):
         self.accept()
 
 
+class ScreenPreviewOverlay(QWidget):
+    """覆盖真实桌面，仅绘制模拟光标和操作提示，不接收鼠标事件。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._geometry = QGuiApplication.screens()[0].geometry() if QGuiApplication.screens() else QRect(0, 0, 1920, 1080)
+        for screen in QGuiApplication.screens():
+            self._geometry = self._geometry.united(screen.geometry())
+        self._cursor_pos: tuple[int, int] | None = None
+        self._title = "安全预览"
+        self._detail = ""
+        self._warning = "不会执行任何真实键盘或鼠标操作"
+        self.setGeometry(self._geometry)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+    def set_action(self, title: str, detail: str, cursor_pos: tuple[int, int] | None = None):
+        self._title = title
+        self._detail = detail
+        if cursor_pos is not None:
+            self._cursor_pos = cursor_pos
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        panel = self.rect().adjusted(24, 24, -24, -24)
+        panel.setHeight(128)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(Qt.GlobalColor.transparent)
+        painter.drawRoundedRect(panel, 12, 12)
+
+        painter.setPen(Qt.GlobalColor.white)
+        painter.setBrush(Qt.GlobalColor.black)
+        painter.setOpacity(0.88)
+        painter.drawRoundedRect(panel, 12, 12)
+        painter.setOpacity(1.0)
+
+        painter.setPen(Qt.GlobalColor.white)
+        font = painter.font()
+        font.setPointSize(18)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(panel.adjusted(20, 16, -20, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, self._title)
+
+        font.setPointSize(14)
+        font.setBold(False)
+        painter.setFont(font)
+        painter.drawText(panel.adjusted(20, 50, -20, -36), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, self._detail)
+
+        font.setPointSize(12)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(Qt.GlobalColor.yellow)
+        painter.drawText(panel.adjusted(20, -24, -20, -12), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, self._warning)
+
+        if self._cursor_pos is not None:
+            x, y = self._cursor_pos
+            px = x - self._geometry.left()
+            py = y - self._geometry.top()
+            painter.setPen(QPen(Qt.GlobalColor.red, 3))
+            painter.drawLine(px - 18, py, px + 18, py)
+            painter.drawLine(px, py - 18, px, py + 18)
+            painter.setPen(QPen(Qt.GlobalColor.white, 2))
+            painter.drawEllipse(px - 8, py - 8, 16, 16)
+
+        painter.end()
+
+
 class MacroEditorDialog(QDialog):
     def __init__(self, events: list[MacroEvent], parent=None):
         super().__init__(parent)
@@ -175,7 +315,7 @@ class MacroEditorDialog(QDialog):
         self._preview_timer.timeout.connect(self._preview_timer_tick)
         self._preview_index = 0
         self._preview_running = False
-        self._preview_waiting = False
+        self._preview_overlay: ScreenPreviewOverlay | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 18, 22, 18)
@@ -190,7 +330,7 @@ class MacroEditorDialog(QDialog):
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         head.addLayout(title_box, 1)
-        self.preview_button = QPushButton("▶ 播放预览")
+        self.preview_button = QPushButton("▶ 桌面预览")
         self.preview_button.clicked.connect(self.toggle_preview)
         head.addWidget(self.preview_button)
         root.addLayout(head)
@@ -209,10 +349,6 @@ class MacroEditorDialog(QDialog):
         toolbar.addStretch()
         root.addLayout(toolbar)
 
-        body = QHBoxLayout()
-        body.setSpacing(12)
-
-        left = QVBoxLayout()
         self.list = QListWidget()
         self.list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.list.setStyleSheet(
@@ -221,7 +357,7 @@ class MacroEditorDialog(QDialog):
             "QListWidget::item:selected{background:#eaf2ff;color:#303133;}"
         )
         self.list.itemDoubleClicked.connect(lambda _: self.edit_selected())
-        left.addWidget(self.list, 1)
+        root.addWidget(self.list, 1)
 
         edit_bar = QHBoxLayout()
         for text, slot in (
@@ -234,40 +370,13 @@ class MacroEditorDialog(QDialog):
             button = QPushButton(text)
             button.clicked.connect(slot)
             edit_bar.addWidget(button)
-        left.addLayout(edit_bar)
-        body.addLayout(left, 3)
-
-        preview = QFrame()
-        preview.setStyleSheet("QFrame{background:#f7f8fa;border:1px solid #e4e7ed;border-radius:12px;}")
-        preview_layout = QVBoxLayout(preview)
-        preview_layout.setContentsMargins(14, 14, 14, 14)
-        preview_layout.setSpacing(10)
-        preview_title = QLabel("安全预览")
-        preview_title.setStyleSheet("font-size:16px;font-weight:700;")
-        preview_layout.addWidget(preview_title)
-        self.preview_canvas = QFrame()
-        self.preview_canvas.setMinimumSize(360, 300)
-        self.preview_canvas.setStyleSheet("QFrame{background:#ffffff;border:1px solid #dcdfe6;border-radius:8px;}")
-        preview_layout.addWidget(self.preview_canvas, 1)
-
-        self.virtual_cursor = QLabel("●", self.preview_canvas)
-        self.virtual_cursor.setStyleSheet("font-size:22px;color:#409eff;background:transparent;border:none;")
-        self.virtual_cursor.adjustSize()
-        self.virtual_cursor.hide()
-
-        self.preview_action = QLabel("等待播放")
-        self.preview_action.setWordWrap(True)
-        self.preview_action.setStyleSheet("font-size:15px;font-weight:700;color:#303133;border:none;")
-        preview_layout.addWidget(self.preview_action)
-        self.preview_status = QLabel("预览不会真的移动鼠标、点击或发送键盘。")
-        self.preview_status.setWordWrap(True)
-        self.preview_status.setStyleSheet("color:#606266;border:none;")
-        preview_layout.addWidget(self.preview_status)
-        body.addWidget(preview, 2)
-        root.addLayout(body, 1)
+        edit_bar.addStretch()
+        root.addLayout(edit_bar)
 
         bottom = QHBoxLayout()
-        bottom.addWidget(QLabel("⚠ 预览只在右侧模拟执行效果，ESC、鼠标点击等都不会真正执行。"), 1)
+        self.preview_hint = QLabel("⚠ 桌面预览只显示虚拟光标和操作提示，不会移动鼠标、点击或发送按键。")
+        self.preview_hint.setStyleSheet("color:#606266;")
+        bottom.addWidget(self.preview_hint, 1)
         cancel = QPushButton("取消")
         cancel.clicked.connect(self.reject)
         save = QPushButton("保存修改")
@@ -367,98 +476,119 @@ class MacroEditorDialog(QDialog):
             self.stop_preview()
             return
         if not self.events:
-            self.preview_status.setText("预览：没有操作")
+            QMessageBox.information(self, "预览", "当前宏没有操作。")
             return
         self._preview_running = True
         self._preview_index = 0
-        self._preview_waiting = False
-        self.preview_button.setText("■ 停止预览")
-        self.preview_status.setText("正在安全预览，不会执行真实操作")
-        self.virtual_cursor.show()
+        self._preview_overlay = ScreenPreviewOverlay()
+        self._preview_overlay.show()
+        self._preview_overlay.raise_()
+        self.preview_button.setText("■ 停止桌面预览")
+        self.preview_hint.setText("正在桌面上安全预览：只显示模拟动作，不执行任何真实操作。")
         self._preview_tick()
 
     def stop_preview(self):
         self._preview_timer.stop()
         self._preview_running = False
-        self._preview_waiting = False
-        self.preview_button.setText("▶ 播放预览")
-        self.preview_status.setText("预览：已停止，未执行任何真实操作")
-        self.preview_action.setText("等待播放")
-        self.list.clearSelection()
+        if self._preview_overlay is not None:
+            self._preview_overlay.close()
+            self._preview_overlay.deleteLater()
+            self._preview_overlay = None
+        self.preview_button.setText("▶ 桌面预览")
+        self.preview_hint.setText("⚠ 桌面预览只显示虚拟光标和操作提示，不会移动鼠标、点击或发送按键。")
 
     def _preview_tick(self):
-        if not self._preview_running or self._preview_index >= len(self.events):
-            if self._preview_running:
-                self._preview_running = False
-                self.preview_button.setText("▶ 播放预览")
-                self.preview_status.setText("预览完成：所有操作均为模拟，没有执行真实操作")
-                self.preview_action.setText("播放完成")
-                self.list.clearSelection()
-            return
-
-        index = self._preview_index
-        event = self.events[index]
-        self.list.setCurrentRow(index)
-        self._preview_waiting = True
-        if event.delay > 0:
-            self.preview_action.setText(f"准备执行第 {index + 1}/{len(self.events)} 步\n等待 {event.delay:.3f} 秒")
-            self.preview_status.setText("按照宏中的原始延迟等待中 · 不执行真实操作")
-            self._preview_timer.start(max(1, int(event.delay * 1000)))
-        else:
-            self._apply_preview_event(event)
-            self._schedule_next_preview()
-
-    def _preview_timer_tick(self):
         if not self._preview_running:
             return
-        index = self._preview_index
-        if index >= len(self.events):
-            return
-        self._preview_waiting = False
-        self._apply_preview_event(self.events[index])
-        self._schedule_next_preview()
-
-    def _schedule_next_preview(self):
-        self._preview_index += 1
         if self._preview_index >= len(self.events):
-            self._preview_timer.start(120)
-        else:
-            self._preview_timer.start(80)
+            self.stop_preview()
+            return
 
-    def _apply_preview_event(self, event: MacroEvent):
+        event = self.events[self._preview_index]
+        self.list.setCurrentRow(self._preview_index)
+        delay_ms = max(0, int(event.delay * 1000))
+        if delay_ms > 0:
+            self._preview_timer.start(delay_ms)
+            if self._preview_overlay:
+                self._preview_overlay.set_action(
+                    f"第 {self._preview_index + 1}/{len(self.events)} 步 · 等待",
+                    f"等待 {event.delay:.3f} 秒后模拟：{self._event_summary(event)}",
+                )
+            return
+        self._apply_preview_event(event)
+        self._preview_index += 1
+        QTimer.singleShot(0, self._preview_tick)
+
+    def _preview_timer_tick(self):
+        if not self._preview_running or self._preview_index >= len(self.events):
+            return
+        self._apply_preview_event(self.events[self._preview_index])
+        self._preview_index += 1
+        QTimer.singleShot(0, self._preview_tick)
+
+    @staticmethod
+    def _event_summary(event: MacroEvent) -> str:
         data = event.data
         if event.type == "key_down":
-            self.preview_action.setText(f"模拟键盘操作\n按下：{data.get('key')}\n\n不会真的发送按键")
+            return f"按下 {data.get('key')}"
+        if event.type == "key_up":
+            return f"释放 {data.get('key')}"
+        if event.type == "mouse_move":
+            return f"移动到 ({data.get('x')}, {data.get('y')})"
+        if event.type == "mouse_click":
+            state = "按下" if data.get('pressed') else "释放"
+            return f"鼠标 {data.get('button')} 键{state} @ ({data.get('x')}, {data.get('y')})"
+        if event.type == "mouse_scroll":
+            return f"滚轮 ({data.get('dx', 0)}, {data.get('dy', 0)}) @ ({data.get('x')}, {data.get('y')})"
+        if event.type == "delay":
+            return f"等待 {event.delay:.3f} 秒"
+        return event.type
+
+    def _apply_preview_event(self, event: MacroEvent):
+        if self._preview_overlay is None:
+            return
+        data = event.data
+        if event.type == "key_down":
+            key = data.get("key")
+            self._preview_overlay.set_action(
+                "⌨ 模拟键盘：按下",
+                f"按键：{key}\n⚠ 不会真的发送 {key}",
+            )
         elif event.type == "key_up":
-            self.preview_action.setText(f"模拟键盘操作\n释放：{data.get('key')}\n\n不会真的发送按键")
+            key = data.get("key")
+            self._preview_overlay.set_action(
+                "⌨ 模拟键盘：释放",
+                f"按键：{key}\n⚠ 不会真的发送 {key}",
+            )
         elif event.type == "mouse_move":
             x, y = int(data.get("x", 0)), int(data.get("y", 0))
-            self._move_virtual_cursor(x, y)
-            self.preview_action.setText(f"模拟鼠标操作\n移动到：({x}, {y})\n\n不会真的移动鼠标")
+            self._preview_overlay.set_action(
+                "🖱 模拟鼠标移动",
+                f"位置：{x}, {y}\n⚠ 不会真的移动鼠标",
+                (x, y),
+            )
         elif event.type == "mouse_click":
             x, y = int(data.get("x", 0)), int(data.get("y", 0))
-            self._move_virtual_cursor(x, y)
+            button = data.get("button", "left")
             state = "按下" if data.get("pressed") else "释放"
-            self.preview_action.setText(f"模拟鼠标操作\n{data.get('button')} 键：{state}\n位置：({x}, {y})\n\n不会真的点击")
+            self._preview_overlay.set_action(
+                f"🖱 模拟鼠标{button}键{state}",
+                f"位置：{x}, {y}\n⚠ 不会真的点击",
+                (x, y),
+            )
         elif event.type == "mouse_scroll":
             x, y = int(data.get("x", 0)), int(data.get("y", 0))
-            self._move_virtual_cursor(x, y)
-            self.preview_action.setText(
-                f"模拟滚轮操作\n位置：({x}, {y})\n滚动：水平 {data.get('dx', 0)}，垂直 {data.get('dy', 0)}\n\n不会真的滚动"
+            dx, dy = data.get("dx", 0), data.get("dy", 0)
+            self._preview_overlay.set_action(
+                "🖱 模拟鼠标滚轮",
+                f"位置：{x}, {y}\n水平：{dx} · 垂直：{dy}\n⚠ 不会真的滚动",
+                (x, y),
             )
         elif event.type == "delay":
-            self.preview_action.setText(f"模拟等待\n{event.delay:.3f} 秒")
-        else:
-            self.preview_action.setText("模拟未知操作\n不会执行")
-
-    def _move_virtual_cursor(self, x: int, y: int):
-        screen = QGuiApplication.primaryScreen()
-        geometry = screen.geometry() if screen else QRect(0, 0, 1920, 1080)
-        w = max(1, self.preview_canvas.width() - self.virtual_cursor.width())
-        h = max(1, self.preview_canvas.height() - self.virtual_cursor.height())
-        px = int((x - geometry.left()) / max(1, geometry.width()) * w)
-        py = int((y - geometry.top()) / max(1, geometry.height()) * h)
-        self.virtual_cursor.move(max(0, min(w, px)), max(0, min(h, py)))
+            self._preview_overlay.set_action(
+                "⏱ 模拟等待",
+                f"等待：{event.delay:.3f} 秒\n⚠ 预览不会执行任何真实操作",
+            )
 
     def reject(self):
         self.stop_preview()
