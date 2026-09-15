@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import os
 import sys
-from PySide6.QtCore import QObject, Signal, Slot, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-    QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget
+    QListWidget, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+    QSpinBox, QVBoxLayout, QWidget
 )
 from pynput import keyboard
 
@@ -58,7 +57,7 @@ class MainWindow(QMainWindow):
             QGroupBox { font-weight: 600; margin-top: 10px; }
             QPushButton { min-height: 34px; padding: 0 16px; }
             QListWidget { background: #fafafa; border: 1px solid #ddd; }
-            QLineEdit, QSpinBox { min-height: 32px; }
+            QSpinBox { min-height: 32px; }
         """)
         layout = QVBoxLayout(root)
 
@@ -74,7 +73,7 @@ class MainWindow(QMainWindow):
         self.pause_btn = QPushButton("Ⅱ 暂停")
         self.pause_btn.clicked.connect(self.player.toggle_pause)
         self.stop_btn = QPushButton("■ 停止")
-        self.stop_btn.clicked.connect(self.player.stop)
+        self.stop_btn.clicked.connect(self.stop_all)
         self.clear_btn = QPushButton("清空")
         self.clear_btn.clicked.connect(self.clear_events)
         for button in (self.record_btn, self.play_btn, self.pause_btn, self.stop_btn, self.clear_btn):
@@ -133,6 +132,14 @@ class MainWindow(QMainWindow):
         self.update_ui()
 
     @Slot()
+    def stop_all(self):
+        if self.recorder.recording:
+            self.recorder.stop()
+            self.status.setText(f"录制结束，共 {len(self.events)} 个操作")
+        self.player.stop()
+        self.update_ui()
+
+    @Slot()
     def play(self):
         if self.recorder.recording:
             self.recorder.stop()
@@ -147,8 +154,11 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def on_recorded(self, event: MacroEvent):
         self.events.append(event)
+        # QListWidget 的更新只在 Qt 主线程执行，监听线程不会直接操作 UI。
         self.list.addItem(self.format_event(event))
-        self.list.scrollToBottom()
+        # 大量鼠标移动时不要每个事件都强制滚动，避免触发额外布局开销。
+        if self.list.count() % 20 == 0:
+            self.list.scrollToBottom()
 
     @Slot(str)
     def on_hotkey(self, key: str):
@@ -160,9 +170,7 @@ class MainWindow(QMainWindow):
             else:
                 self.play()
         elif key == "f10":
-            self.player.stop()
-            if self.recorder.recording:
-                self.recorder.stop()
+            self.stop_all()
             self.status.setText("已紧急停止")
             self.update_ui()
 
