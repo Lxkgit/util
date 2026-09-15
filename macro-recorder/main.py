@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from PySide6.QtCore import QObject, Signal, Slot, QSettings
+from PySide6.QtCore import QObject, Signal, Slot, QSettings, QTimer
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QDialog, QDialogButtonBox, QFormLayout,
@@ -39,10 +39,10 @@ class SettingsDialog(QDialog):
         root.setSpacing(0)
 
         self.menu = QListWidget()
+        self.menu.setObjectName("settingsMenu")
         self.menu.setFixedWidth(160)
         self.menu.addItems(["快捷键", "录制", "播放"])
         self.menu.setCurrentRow(0)
-        self.menu.currentRowChanged.connect(self.pages.setCurrentIndex if hasattr(self, 'pages') else lambda _: None)
         root.addWidget(self.menu)
 
         right = QVBoxLayout()
@@ -54,8 +54,8 @@ class SettingsDialog(QDialog):
         right.addWidget(title)
 
         self.pages = QStackedWidget()
-        self.menu.currentRowChanged.connect(self.pages.setCurrentIndex)
         right.addWidget(self.pages, 1)
+        self.menu.currentRowChanged.connect(self.pages.setCurrentIndex)
 
         self.pages.addWidget(self._shortcut_page())
         self.pages.addWidget(self._record_page())
@@ -65,6 +65,43 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         right.addWidget(buttons)
+
+        self.setStyleSheet("""
+            QDialog { background: #f5f7fa; }
+            QListWidget#settingsMenu {
+                background: #eef2f7;
+                border: 0;
+                padding: 12px 8px;
+                outline: 0;
+            }
+            QListWidget#settingsMenu::item {
+                min-height: 42px;
+                padding: 0 14px;
+                border-radius: 7px;
+                color: #4b5563;
+            }
+            QListWidget#settingsMenu::item:selected {
+                background: white;
+                color: #111827;
+                font-weight: 600;
+            }
+            QFrame#settingCard {
+                background: white;
+                border: 1px solid #e4e7ed;
+                border-radius: 10px;
+            }
+            QKeySequenceEdit {
+                min-height: 34px;
+                border: 1px solid #dcdfe6;
+                border-radius: 6px;
+                background: white;
+            }
+            QCheckBox { spacing: 8px; }
+            QDialogButtonBox QPushButton {
+                min-width: 80px;
+                min-height: 34px;
+            }
+        """)
 
     def _card(self, title: str, subtitle: str = "") -> tuple[QFrame, QVBoxLayout]:
         card = QFrame()
@@ -101,6 +138,7 @@ class SettingsDialog(QDialog):
         form.addRow("结束录制", self.stop_edit)
 
         self.shared_tip = QLabel()
+        self.shared_tip.setWordWrap(True)
         self.shared_tip.setStyleSheet("color: #777; margin-top: 4px;")
         form.addWidget(self.shared_tip)
         layout.addWidget(card)
@@ -204,9 +242,7 @@ class MainWindow(QMainWindow):
             "down": "down", "pause": "pause", "ctrl": "ctrl", "control": "ctrl",
             "shift": "shift", "alt": "alt", "win": "cmd", "meta": "cmd",
         }
-        converted = []
-        for part in parts:
-            converted.append(mapping.get(part, part))
+        converted = [mapping.get(part, part) for part in parts]
         if len(converted) == 1:
             return converted[0]
         return "+".join(f"<{p}>" if p in {"ctrl", "shift", "alt", "cmd", "enter", "esc", "space", "tab"} else p for p in converted)
@@ -267,7 +303,7 @@ class MainWindow(QMainWindow):
         title_row.addLayout(title_box, 1)
         settings_btn = QPushButton("⚙  设置")
         settings_btn.clicked.connect(self.open_settings)
-        title_row.addWidget(settings_btn, 0, )
+        title_row.addWidget(settings_btn)
         layout.addLayout(title_row)
 
         panel = QFrame()
@@ -289,12 +325,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(panel)
 
         settings_row = QHBoxLayout()
-        repeat_label = QLabel("循环次数")
+        settings_row.addWidget(QLabel("循环次数"))
         self.repeat = QSpinBox()
         self.repeat.setRange(0, 999999)
         self.repeat.setValue(1)
         self.repeat.setSpecialValueText("无限循环")
-        settings_row.addWidget(repeat_label)
         settings_row.addWidget(self.repeat)
         settings_row.addStretch()
         self.status = QLabel("就绪")
@@ -349,6 +384,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("record_hotkey", self.record_hotkey)
         self.settings.setValue("stop_hotkey", self.stop_hotkey)
         self.settings.setValue("shared_hotkey", self.shared_hotkey)
+        self.settings.sync()
         self.install_hotkeys()
         self.update_shortcut_label()
         self.status.setText("设置已保存")
@@ -366,6 +402,14 @@ class MainWindow(QMainWindow):
         self.events.clear()
         self.list.clear()
         self.progress.setValue(0)
+        self.status.setText("准备录制……")
+        self.update_ui()
+        # 等待鼠标释放“开始录制”按钮，避免按钮本身的点击被录进宏。
+        QTimer.singleShot(120, self._start_recorder_delayed)
+
+    def _start_recorder_delayed(self):
+        if self.player.running or self.recorder.recording:
+            return
         self.recorder.start()
         self.status.setText("正在录制……")
         self.update_ui()
