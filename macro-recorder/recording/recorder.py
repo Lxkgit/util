@@ -51,6 +51,7 @@ class MacroRecorder:
             self._keyboard_listener = keyboard.Listener(
                 on_press=self._on_key_press,
                 on_release=self._on_key_release,
+                suppress=False,
             )
             self._keyboard_listener.daemon = True
             self._keyboard_listener.start()
@@ -60,6 +61,7 @@ class MacroRecorder:
                 on_move=self._on_move,
                 on_click=self._on_click,
                 on_scroll=self._on_scroll,
+                suppress=False,
             )
             self._mouse_listener.daemon = True
             self._mouse_listener.start()
@@ -101,8 +103,13 @@ class MacroRecorder:
         self._keyboard_listener = None
         self._mouse_listener = None
         for listener in listeners:
-            if listener:
-                listener.stop()
+            if not listener:
+                continue
+            listener.stop()
+            try:
+                listener.join(timeout=1.0)
+            except RuntimeError:
+                pass
 
     @staticmethod
     def _normalize_key_name(name: str) -> str:
