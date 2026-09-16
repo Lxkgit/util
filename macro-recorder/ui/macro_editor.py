@@ -25,7 +25,12 @@ class PointPreviewOverlay(QWidget):
         self.geometry_rect = geometry
         self.point = point
         self.setGeometry(geometry)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
@@ -60,12 +65,11 @@ class PointPreviewOverlay(QWidget):
 
 
 class PointPicker(QDialog):
-    """全屏选点。点击只更新候选坐标，只有确认后才提交最终坐标。"""
+    """全屏选点。左键可反复选择，确认时提交最后一次点击的位置。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.point: tuple[int, int] | None = None
-        self._candidate_point: tuple[int, int] | None = None
         self._mouse_pos = QCursor.pos()
         screens = QGuiApplication.screens()
         geometry = screens[0].geometry() if screens else QRect(0, 0, 1920, 1080)
@@ -73,20 +77,31 @@ class PointPicker(QDialog):
             geometry = geometry.united(screen.geometry())
         self._screen_geometry = geometry
         self.setGeometry(geometry)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
         self.info = QLabel(self)
-        self.info.setStyleSheet("QLabel{background:rgba(20,24,32,235);color:white;padding:9px 14px;border-radius:8px;font-size:14px;font-weight:600;}")
+        self.info.setStyleSheet(
+            "QLabel{background:rgba(20,24,32,235);color:white;"
+            "padding:9px 14px;border-radius:8px;font-size:14px;font-weight:600;}"
+        )
         self.info.move(24, 24)
         self._update_position_text(self._mouse_pos)
 
         self.confirm = QPushButton("确认此位置", self)
-        self.confirm.setStyleSheet("QPushButton{background:#409eff;color:white;border:0;border-radius:7px;padding:8px 15px;font-weight:600;}")
+        self.confirm.setStyleSheet(
+            "QPushButton{background:#409eff;color:white;border:0;"
+            "border-radius:7px;padding:8px 15px;font-weight:600;}"
+        )
         self.confirm.clicked.connect(self._confirm)
         self.confirm.move(24, 70)
+        self.confirm.setEnabled(False)
 
         self.cancel = QPushButton("取消", self)
         self.cancel.clicked.connect(self.reject)
@@ -97,6 +112,19 @@ class PointPicker(QDialog):
         self._mouse_pos = QCursor.pos()
         self._update_position_text(self._mouse_pos)
         self.update()
+        QTimer.singleShot(0, self._activate_picker)
+
+    def _activate_picker(self):
+        self.raise_()
+        self.activateWindow()
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.grabMouse()
+        self.grabKeyboard()
+
+    def closeEvent(self, event):
+        self.releaseMouse()
+        self.releaseKeyboard()
+        super().closeEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -122,7 +150,7 @@ class PointPicker(QDialog):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.globalPosition().toPoint()
-            self._candidate_point = (pos.x(), pos.y())
+            self.point = (pos.x(), pos.y())
             self._mouse_pos = pos
             self._update_position_text(pos, True)
             self.confirm.setEnabled(True)
@@ -134,19 +162,21 @@ class PointPicker(QDialog):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
             self.reject()
-        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self._candidate_point is not None:
+        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.point is not None:
             self._confirm()
         else:
             super().keyPressEvent(event)
 
     def _update_position_text(self, pos, selected=False):
-        self.info.setText(f"{'已选择' if selected else '当前'}：X={pos.x()}  Y={pos.y()} · 左键选择 · Enter 确认 · Esc 取消")
+        self.info.setText(
+            f"{'已选择' if selected else '当前'}：X={pos.x()}  Y={pos.y()} · "
+            "左键选择 · Enter 确认 · Esc 取消"
+        )
         self.info.adjustSize()
 
     def _confirm(self):
-        if self._candidate_point is None:
+        if self.point is None:
             return
-        self.point = self._candidate_point
         self.accept()
 
 
@@ -242,7 +272,13 @@ class MouseActionDialog(QDialog):
         elif self.action == "move":
             self.events = [MacroEvent("mouse_move", delay, {"x": x, "y": y})]
         else:
-            self.events = [MacroEvent("mouse_scroll", delay, {"x": x, "y": y, "dx": self.dx.value(), "dy": self.dy.value()})]
+            self.events = [
+                MacroEvent(
+                    "mouse_scroll",
+                    delay,
+                    {"x": x, "y": y, "dx": self.dx.value(), "dy": self.dy.value()},
+                )
+            ]
         self.accept()
 
     def closeEvent(self, event):
@@ -263,7 +299,12 @@ class ScreenPreviewOverlay(QWidget):
         self._detail = ""
         self._warning = "不会执行任何真实键盘或鼠标操作"
         self.setGeometry(self._geometry)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
@@ -347,212 +388,218 @@ class MacroEditorDialog(QDialog):
         root.addLayout(toolbar)
         self.list = QListWidget()
         self.list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.list.setStyleSheet("QListWidget{background:white;border:1px solid #e4e7ed;border-radius:10px;padding:6px;}QListWidget::item{padding:10px 12px;}QListWidget::item:selected{background:#eaf2ff;color:#303133;}")
+        self.list.setStyleSheet(
+            "QListWidget{background:white;border:1px solid #e4e7ed;border-radius:10px;padding:6px;}"
+            "QListWidget::item{padding:10px 12px;border-radius:6px;}"
+            "QListWidget::item:selected{background:#ecf5ff;color:#1f2d3d;}"
+        )
         self.list.itemDoubleClicked.connect(lambda _: self.edit_selected())
         root.addWidget(self.list, 1)
-        edit_bar = QHBoxLayout()
-        for text, slot in (("编辑", self.edit_selected), ("复制", self.duplicate_selected), ("上移", lambda: self.move_selected(-1)), ("下移", lambda: self.move_selected(1)), ("删除", self.delete_selected), ("批量删除", self.batch_delete), ("清空", self.clear_all)):
+        bottom = QHBoxLayout()
+        for text, slot in (
+            ("编辑", self.edit_selected),
+            ("复制", self.copy_selected),
+            ("上移", self.move_up),
+            ("下移", self.move_down),
+            ("删除", self.delete_selected),
+            ("批量删除", self.batch_delete),
+            ("清空", self.clear_all),
+        ):
             button = QPushButton(text)
             button.clicked.connect(slot)
-            edit_bar.addWidget(button)
-        edit_bar.addStretch()
-        root.addLayout(edit_bar)
-        bottom = QHBoxLayout()
-        hint = QLabel("⚠ 桌面预览只显示虚拟光标和操作提示，不会移动鼠标、点击或发送按键。")
-        hint.setStyleSheet("color:#606266;")
-        bottom.addWidget(hint, 1)
-        cancel = QPushButton("取消")
-        cancel.clicked.connect(self.reject)
-        save = QPushButton("保存修改")
-        save.clicked.connect(self.accept)
-        bottom.addWidget(cancel)
-        bottom.addWidget(save)
+            bottom.addWidget(button)
+        bottom.addStretch()
         root.addLayout(bottom)
-        self._reload_list()
+        self._refresh()
 
-    def closeEvent(self, event):
-        self.stop_preview()
-        super().closeEvent(event)
-
-    def _reload_list(self, selected=-1):
-        self.list.clear()
-        for index, event in enumerate(self.events):
-            self.list.addItem(QListWidgetItem(self._event_text(index, event)))
-        if 0 <= selected < self.list.count():
-            self.list.setCurrentRow(selected)
-
-    def _event_text(self, index, event):
+    def _describe(self, event: MacroEvent):
         d = event.data
-        if event.type in ("key", "key_down", "key_up"):
-            detail = f"：{d.get('key', '')} {'按下' if event.type == 'key_down' or d.get('action') == 'down' else '释放' if event.type == 'key_up' or d.get('action') == 'up' else d.get('action', '')}"
-        elif event.type == "mouse_move":
-            detail = f"：({d.get('x')}, {d.get('y')})"
-        elif event.type == "mouse_click":
-            detail = f"：{d.get('button', 'left')} ({d.get('x')}, {d.get('y')}) {'按下' if d.get('pressed') else '释放'}"
-        elif event.type == "mouse_scroll":
-            detail = f"：({d.get('x')}, {d.get('y')}) dx={d.get('dx', 0)} dy={d.get('dy', 0)}"
-        else:
-            detail = ""
-        return f"{index + 1:03d}  {event.type}{detail}    延迟 {event.delay:.3f}s"
+        delay = f"延迟 {event.delay:.3f}s"
+        if event.type == "key_down":
+            return f"按下键：{d.get('key')}    {delay}"
+        if event.type == "key_up":
+            return f"释放键：{d.get('key')}    {delay}"
+        if event.type == "mouse_move":
+            return f"鼠标移动：({d.get('x')}, {d.get('y')})    {delay}"
+        if event.type == "mouse_click":
+            state = "按下" if d.get("pressed") else "释放"
+            return f"鼠标{d.get('button', 'left')} {state}：({d.get('x')}, {d.get('y')})    {delay}"
+        if event.type == "mouse_scroll":
+            return f"鼠标滚轮：({d.get('x')}, {d.get('y')}) Δ({d.get('dx')}, {d.get('dy')})    {delay}"
+        if event.type == "delay":
+            return f"等待：{event.delay:.3f}s"
+        return f"{event.type}    {delay}"
+
+    def _refresh(self):
+        self.list.clear()
+        for index, event in enumerate(self.events, 1):
+            item = QListWidgetItem(f"{index:03d}  {self._describe(event)}")
+            self.list.addItem(item)
+
+    def _selected_rows(self):
+        return sorted({self.list.row(item) for item in self.list.selectedItems()})
 
     def insert_action(self, action):
-        if action == "delay":
-            dialog = ActionDialog(action, self)
+        if action == "key":
+            dialog = ActionDialog("key", self)
+        elif action == "delay":
+            dialog = ActionDialog("delay", self)
         else:
             dialog = ActionDialog(action, self)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.events:
-            row = self.list.currentRow()
-            if row < 0:
-                row = len(self.events)
-            else:
-                row += 1
-            self.events[row:row] = dialog.events
-            self._reload_list(row)
+            rows = self._selected_rows()
+            insert_at = rows[-1] + 1 if rows else len(self.events)
+            self.events[insert_at:insert_at] = dialog.events
+            self._refresh()
+            self.list.setCurrentRow(insert_at)
 
     def edit_selected(self):
-        rows = sorted(index.row() for index in self.list.selectedIndexes())
+        rows = self._selected_rows()
         if len(rows) != 1:
-            if len(rows) > 1:
-                QMessageBox.information(self, "提示", "一次只能编辑一个事件。")
             return
         row = rows[0]
-        event = self.events[row]
-        dialog = EventEditorDialog(event, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._reload_list(row)
+        dialog = EventEditorDialog(self.events[row], self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.event:
+            self.events[row] = dialog.event
+            self._refresh()
+            self.list.setCurrentRow(row)
 
-    def duplicate_selected(self):
-        rows = sorted(set(index.row() for index in self.list.selectedIndexes()))
+    def copy_selected(self):
+        rows = self._selected_rows()
         if not rows:
             return
+        copied = [MacroEvent(self.events[row].type, self.events[row].delay, dict(self.events[row].data)) for row in rows]
         insert_at = rows[-1] + 1
-        copies = [MacroEvent(self.events[i].type, self.events[i].delay, dict(self.events[i].data)) for i in rows]
-        self.events[insert_at:insert_at] = copies
-        self._reload_list(insert_at)
+        self.events[insert_at:insert_at] = copied
+        self._refresh()
 
-    def move_selected(self, direction):
-        rows = sorted(set(index.row() for index in self.list.selectedIndexes()))
-        if not rows:
+    def move_up(self):
+        rows = self._selected_rows()
+        if not rows or rows[0] == 0:
             return
-        if direction < 0 and rows[0] == 0:
+        selected = [self.events[row] for row in rows]
+        for row in reversed(rows):
+            self.events[row - 1], self.events[row] = self.events[row], self.events[row - 1]
+        self._refresh()
+        for row in [r - 1 for r in rows]:
+            self.list.item(row).setSelected(True)
+
+    def move_down(self):
+        rows = self._selected_rows()
+        if not rows or rows[-1] >= len(self.events) - 1:
             return
-        if direction > 0 and rows[-1] == len(self.events) - 1:
-            return
-        if direction < 0:
-            for row in rows:
-                self.events[row - 1], self.events[row] = self.events[row], self.events[row - 1]
-            self._reload_list(rows[0] - 1)
-        else:
-            for row in reversed(rows):
-                self.events[row + 1], self.events[row] = self.events[row], self.events[row + 1]
-            self._reload_list(rows[-1] + 1)
+        for row in reversed(rows):
+            self.events[row + 1], self.events[row] = self.events[row], self.events[row + 1]
+        self._refresh()
+        for row in [r + 1 for r in rows]:
+            self.list.item(row).setSelected(True)
 
     def delete_selected(self):
-        rows = sorted(set(index.row() for index in self.list.selectedIndexes()))
-        if not rows:
+        rows = self._selected_rows()
+        if len(rows) != 1:
             return
         row = rows[0]
         self.events.pop(row)
-        self._reload_list(min(row, len(self.events) - 1))
+        self._refresh()
+        if self.events:
+            self.list.setCurrentRow(min(row, len(self.events) - 1))
 
     def batch_delete(self):
-        rows = sorted(set(index.row() for index in self.list.selectedIndexes()), reverse=True)
+        rows = self._selected_rows()
         if not rows:
             return
-        if QMessageBox.question(self, "确认删除", f"确定删除选中的 {len(rows)} 个事件吗？") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "确认删除", f"确定删除选中的 {len(rows)} 个操作吗？") != QMessageBox.StandardButton.Yes:
             return
-        first = min(rows)
-        for row in rows:
+        for row in reversed(rows):
             self.events.pop(row)
-        self._reload_list(min(first, len(self.events) - 1))
+        self._refresh()
 
     def clear_all(self):
         if not self.events:
             return
-        if QMessageBox.question(self, "确认清空", "确定清空全部宏事件吗？") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "确认清空", "确定清空全部宏操作吗？") != QMessageBox.StandardButton.Yes:
             return
         self.events.clear()
-        self._reload_list()
+        self._refresh()
 
     def toggle_preview(self):
         if self._preview_running:
-            self.stop_preview()
-        else:
-            self.start_preview()
-
-    def start_preview(self):
-        if not self.events:
-            QMessageBox.information(self, "提示", "当前没有可预览的宏事件。")
+            self._stop_preview()
             return
-        self.stop_preview()
-        self._preview_index = 0
+        if not self.events:
+            QMessageBox.information(self, "提示", "当前没有可预览的宏操作。")
+            return
         self._preview_running = True
+        self._preview_index = 0
         self.preview_button.setText("■ 停止预览")
         self._preview_overlay = ScreenPreviewOverlay()
-        self._preview_overlay.show()
         self._preview_tick()
-
-    def stop_preview(self):
-        self._preview_running = False
-        self._preview_timer.stop()
-        if self._preview_overlay:
-            self._preview_overlay.close()
-            self._preview_overlay.deleteLater()
-            self._preview_overlay = None
-        if hasattr(self, "preview_button"):
-            self.preview_button.setText("▶ 桌面预览")
 
     def _preview_tick(self):
         if not self._preview_running:
             return
         if self._preview_index >= len(self.events):
             self._preview_timer.start(700)
-            self._preview_running = "ending"
-            return
-        delay = max(0.0, float(self.events[self._preview_index].delay))
-        self._preview_timer.start(max(1, int(delay * 1000)))
-        self._preview_running = "waiting"
-
-    def _preview_timer_tick(self):
-        if self._preview_running == "ending":
-            self.stop_preview()
-            return
-        if self._preview_running not in ("waiting", True):
-            return
-        self._preview_running = True
-        if self._preview_index >= len(self.events):
-            self._preview_timer.start(700)
-            self._preview_running = "ending"
+            self._preview_running = False
+            self.preview_button.setText("▶ 桌面预览")
             return
         event = self.events[self._preview_index]
-        title, detail, cursor = self._preview_description(event)
-        if self._preview_overlay:
-            self._preview_overlay.set_action(title, detail, cursor)
+        delay = max(0.0, float(event.delay))
+        self._preview_timer.start(max(1, int(delay * 1000)))
+
+    def _preview_timer_tick(self):
+        if not self._preview_running:
+            return
+        if self._preview_index >= len(self.events):
+            self._stop_preview()
+            return
+        event = self.events[self._preview_index]
+        title = "模拟操作"
+        detail = self._describe(event)
+        cursor = None
+        if event.type == "key_down":
+            title = f"模拟按键：{event.data.get('key')}"
+            detail = "不会真的按下键盘"
+        elif event.type == "key_up":
+            title = f"模拟释放：{event.data.get('key')}"
+            detail = "不会真的释放键盘"
+        elif event.type == "mouse_click":
+            title = f"模拟鼠标{event.data.get('button', 'left')} {'按下' if event.data.get('pressed') else '释放'}"
+            detail = f"位置：{event.data.get('x')}, {event.data.get('y')}"
+            cursor = (event.data.get('x'), event.data.get('y'))
+        elif event.type == "mouse_move":
+            title = "模拟鼠标移动"
+            detail = f"位置：{event.data.get('x')}, {event.data.get('y')}"
+            cursor = (event.data.get('x'), event.data.get('y'))
+        elif event.type == "mouse_scroll":
+            title = "模拟鼠标滚轮"
+            detail = f"位置：{event.data.get('x')}, {event.data.get('y')}  Δ({event.data.get('dx')}, {event.data.get('dy')})"
+            cursor = (event.data.get('x'), event.data.get('y'))
+        elif event.type == "delay":
+            title = "模拟等待"
+            detail = f"等待 {event.delay:.3f} 秒"
+        self._preview_overlay.set_action(title, detail, cursor)
+        if not self._preview_overlay.isVisible():
+            self._preview_overlay.show()
+            self._preview_overlay.raise_()
         self._preview_index += 1
         if self._preview_index < len(self.events):
             next_delay = max(0.0, float(self.events[self._preview_index].delay))
             self._preview_timer.start(max(1, int(next_delay * 1000)))
-            self._preview_running = True
         else:
             self._preview_timer.start(700)
-            self._preview_running = "ending"
+            self._preview_running = False
+            self.preview_button.setText("▶ 桌面预览")
 
-    def _preview_description(self, event):
-        d = event.data
-        if event.type == "mouse_click":
-            state = "按下" if d.get("pressed") else "释放"
-            return f"模拟鼠标{d.get('button', 'left')}键{state}", f"位置：{d.get('x')}, {d.get('y')}\n⚠ 不会实际点击", (d.get("x"), d.get("y"))
-        if event.type == "mouse_move":
-            return "模拟鼠标移动", f"移动到：{d.get('x')}, {d.get('y')}\n⚠ 不会实际移动鼠标", (d.get("x"), d.get("y"))
-        if event.type == "mouse_scroll":
-            return "模拟鼠标滚轮", f"位置：{d.get('x')}, {d.get('y')}\n滚动：dx={d.get('dx', 0)}, dy={d.get('dy', 0)}\n⚠ 不会实际滚动", (d.get("x"), d.get("y"))
-        if event.type in ("key", "key_down", "key_up"):
-            key = d.get("key", "")
-            state = "按下" if event.type == "key_down" or d.get("action") == "down" else "释放" if event.type == "key_up" or d.get("action") == "up" else ""
-            return f"模拟按键：{key} {state}".strip(), "⚠ 不会真的发送键盘输入", None
-        if event.type == "delay":
-            return "模拟等待", f"等待 {event.delay:.3f} 秒", None
-        return f"模拟操作：{event.type}", str(d), None
+    def _stop_preview(self):
+        self._preview_timer.stop()
+        self._preview_running = False
+        self.preview_button.setText("▶ 桌面预览")
+        if self._preview_overlay:
+            self._preview_overlay.close()
+            self._preview_overlay.deleteLater()
+            self._preview_overlay = None
 
-    def get_events(self):
-        return [MacroEvent(e.type, e.delay, dict(e.data)) for e in self.events]
+    def closeEvent(self, event):
+        self._stop_preview()
+        super().closeEvent(event)
