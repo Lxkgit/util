@@ -10,9 +10,6 @@ class EnhancedMainWindow(MainWindow):
     def __init__(self):
         super().__init__()
         self._build_countdown_overlay()
-        self._play_restore_timer = QTimer(self)
-        self._play_restore_timer.setSingleShot(True)
-        self._play_restore_timer.timeout.connect(self._restore_after_playback)
 
     def _build_countdown_overlay(self):
         root = self.centralWidget()
@@ -97,13 +94,9 @@ class EnhancedMainWindow(MainWindow):
     def stop_all(self):
         super().stop_all()
         self.countdown_overlay.hide()
-        if self.isMinimized() and not self.player.running:
-            self.showNormal()
-            self.raise_()
-            self.activateWindow()
 
     def play(self):
-        """播放屏幕级宏时最小化录制器，保持原尺寸，不干扰目标窗口和系统 UI。"""
+        """播放时保持软件窗口原样，不最小化、不隐藏，直接发送屏幕级键鼠事件。"""
         if self.recorder.recording:
             self.stop_recording()
         if not self.events:
@@ -112,32 +105,15 @@ class EnhancedMainWindow(MainWindow):
         if self.player.running:
             return
 
-        self._play_restore_timer.stop()
         if self.player.play(self.events, self.repeat.value()):
             self.status.setText("播放中：屏幕级键盘/鼠标操作")
             self._refresh()
-            self.showMinimized()
-
-    def _on_state(self, state: str):
-        super()._on_state(state)
-        if state in {"播放完成", "已停止"} or state.startswith("播放异常："):
-            self._play_restore_timer.start(150)
-
-    def _restore_after_playback(self):
-        if self.player.running:
-            return
-        if self.isMinimized():
-            self.showNormal()
-        self.raise_()
-        self.activateWindow()
-        self._refresh()
 
     def _begin_recording(self):
         self.countdown_overlay.hide()
         super()._begin_recording()
 
     def closeEvent(self, event):
-        self._play_restore_timer.stop()
         if hasattr(self, "countdown_overlay"):
             self.countdown_overlay.hide()
         super().closeEvent(event)
