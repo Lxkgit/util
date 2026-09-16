@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
 from ui.main_window import MainWindow
@@ -10,11 +10,6 @@ class EnhancedMainWindow(MainWindow):
     def __init__(self):
         super().__init__()
         self._build_countdown_overlay()
-        self._play_prepare_timer = QTimer(self)
-        self._play_prepare_timer.setSingleShot(True)
-        self._play_prepare_timer.timeout.connect(self._start_prepared_playback)
-        self._play_prepare_events = None
-        self._play_prepare_repeat = 1
 
     def _build_countdown_overlay(self):
         root = self.centralWidget()
@@ -101,53 +96,19 @@ class EnhancedMainWindow(MainWindow):
         self.countdown_overlay.hide()
 
     def play(self):
-        """播放前隐藏自身，让目标窗口获得前台焦点。"""
+        """播放时保持录制器窗口原尺寸，不隐藏、不缩放、不移动。"""
         if self.recorder.recording:
             self.stop_recording()
         if not self.events:
             self.status.setText("没有可播放的操作，请先录制或加载宏。")
             return
-        if self.player.running or self._play_prepare_timer.isActive():
-            return
-
-        self._play_prepare_events = list(self.events)
-        self._play_prepare_repeat = self.repeat.value()
-        self.status.setText("准备播放：已隐藏宏录制器，目标窗口即将接管操作")
-        self._refresh()
-        self.hide()
-        self._play_prepare_timer.start(250)
-
-    def _start_prepared_playback(self):
-        events = self._play_prepare_events
-        repeat = self._play_prepare_repeat
-        self._play_prepare_events = None
-        if not events:
-            self.show()
-            return
-        if not self.player.play(events, repeat):
-            self.show()
-            self.status.setText("播放启动失败")
-            self._refresh()
-
-    def _on_state(self, state: str):
-        super()._on_state(state)
-        if state in {"播放完成", "已停止"} or state.startswith("播放异常："):
-            QTimer.singleShot(120, self._restore_after_playback)
-
-    def _restore_after_playback(self):
         if self.player.running:
             return
-        self.show()
-        self.raise_()
-        self.activateWindow()
-        self._refresh()
-
-    def _begin_recording(self):
-        self.countdown_overlay.hide()
-        super()._begin_recording()
+        if self.player.play(self.events, self.repeat.value()):
+            self.status.setText("播放中：按录制的屏幕坐标执行操作")
+            self._refresh()
 
     def closeEvent(self, event):
-        self._play_prepare_timer.stop()
         if hasattr(self, "countdown_overlay"):
             self.countdown_overlay.hide()
         super().closeEvent(event)
