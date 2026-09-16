@@ -25,6 +25,7 @@ class MacroRecorder:
         self._mouse_listener = None
         self._windows_thread = None
         self._windows_stop = None
+        self._windows_thread_id = None
         self._keyboard_hook = None
         self._mouse_hook = None
         self._keyboard_proc = None
@@ -136,12 +137,13 @@ class MacroRecorder:
         self._windows_thread.start()
 
     def _windows_hook_thread(self):
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
         WH_KEYBOARD_LL = 13
         WH_MOUSE_LL = 14
         WM_QUIT = 0x0012
         LRESULT = ctypes.c_ssize_t
+        HHOOK = ctypes.c_void_p
+        HINSTANCE = ctypes.c_void_p
 
         LowLevelKeyboardProc = ctypes.WINFUNCTYPE(
             LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
@@ -171,6 +173,23 @@ class MacroRecorder:
                 ("dwExtraInfo", ctypes.c_size_t),
             ]
 
+        user32.SetWindowsHookExW.argtypes = [
+            ctypes.c_int,
+            ctypes.c_void_p,
+            HINSTANCE,
+            wintypes.DWORD,
+        ]
+        user32.SetWindowsHookExW.restype = HHOOK
+        user32.UnhookWindowsHookEx.argtypes = [HHOOK]
+        user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+        user32.CallNextHookEx.argtypes = [HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        user32.CallNextHookEx.restype = LRESULT
+        user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+        user32.GetMessageW.restype = wintypes.BOOL
+        user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        user32.PostThreadMessageW.restype = wintypes.BOOL
+        user32.GetCurrentThreadId.restype = wintypes.DWORD
+
         def keyboard_proc(n_code, w_param, l_param):
             if n_code >= 0 and self._windows_stop and not self._windows_stop.is_set():
                 info = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
@@ -194,55 +213,92 @@ class MacroRecorder:
                         self._on_move(x, y)
                 elif msg in (0x0201, 0x0202, 0x0204, 0x0205, 0x0207, 0x0208):
                     if self.mode in {"all", "mouse"}:
-                        button = {0x0201: "left", 0x0202: "left", 0x0204: "right", 0x0205: "right", 0x0207: "middle", 0x0208: "middle"}[msg]
-                        self._add("mouse_click", {"x": x, "y": y, "button": button, "pressed": msg in (0x0201, 0x0204, 0x0207)})
+                        button = {
+                            0x0201: "left", 0x0202: "left",
+                            0x0204: "right", 0x0205: "right",
+                            0x0207: "middle", 0x0208: "middle",
+                        }[msg]
+                        self._add("mouse_click", {
+                            "x": x,
+                            "y": y,
+                            "button": button,
+                            "pressed": msg in (0x0201, 0x0204, 0x0207),
+                        })
                 elif msg == 0x020A:
                     if self.mode in {"all", "mouse"}:
                         delta = ctypes.c_short((int(info.mouseData) >> 16) & 0xFFFF).value
-                        self._add("mouse_scroll", {"x": x, "y": y, "dx": 0, "dy": int(delta / 120)})
+                        self._add("mouse_scroll", {
+                            "x": x,
+                            "y": y,
+                            "dx": 0,
+                            "dy": int(delta / 120),
+                        })
             return user32.CallNextHookEx(None, n_code, w_param, l_param)
 
         self._keyboard_proc = LowLevelKeyboardProc(keyboard_proc)
         self._mouse_proc = LowLevelMouseProc(mouse_proc)
+        self._windows_thread_id = int(user32.GetCurrentThreadId())
 
-        if self.mode in {"all", "keyboard"}:
-            self._keyboard_hook = user32.SetWindowsHookExW(
-                WH_KEYBOARD_LL, self._keyboard_proc, kernel32.GetModuleHandleW(None), 0
-            )
-        if self.mode in {"all", "mouse"}:
-            self._mouse_hook = user32.SetWindowsHookExW(
-                WH_MOUSE_LL, self._mouse_proc, kernel32.GetModuleHandleW(None), 0
-            )
+        try:
+            # WH_KEYBOARD_LL / WH_MOUSE_LL 使用当前进程中的回调函数。
+            # hMod 传 NULL，避免 Python 进程调用 GetModuleHandleW 后得到的句柄
+            # 在某些 Python/Windows 环境下导致 ERROR_MOD_NOT_FOUND (126)。
+            if self.mode in {"all", "keyboard"}:
+                self._keyboard_hook = user32.SetWindowsHookExW(
+                    WH_KEYBOARD_LL, ctypes.cast(self._keyboard_proc, ctypes.c_void_p), None, 0
+                )
+            if self.mode in {"all", "mouse"}:
+                self._mouse_hook = user32.SetWindowsHookExW(
+                    WH_MOUSE_LL, ctypes.cast(self._mouse_proc, ctypes.c_void_p), None, 0
+                )
 
-        if (self.mode in {"all", "keyboard"} and not self._keyboard_hook) or (self.mode in {"all", "mouse"} and not self._mouse_hook):
-            raise ctypes.WinError()
+            if (self.mode in {"all", "keyboard"} and not self._keyboard_hook) or (
+                self.mode in {"all", "mouse"} and not self._mouse_hook
+            ):
+                error = ctypes.get_last_error()
+                raise ctypes.WinError(error)
 
-        msg = wintypes.MSG()
-        while self._windows_stop and not self._windows_stop.is_set():
-            result = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
-            if result <= 0:
-                break
-
-        if self._keyboard_hook:
-            user32.UnhookWindowsHookEx(self._keyboard_hook)
-            self._keyboard_hook = None
-        if self._mouse_hook:
-            user32.UnhookWindowsHookEx(self._mouse_hook)
-            self._mouse_hook = None
+            msg = wintypes.MSG()
+            while self._windows_stop and not self._windows_stop.is_set():
+                result = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if result == -1:
+                    error = ctypes.get_last_error()
+                    raise ctypes.WinError(error)
+                if result == 0:
+                    break
+        except Exception as exc:
+            # 录制线程不能因为 Hook 初始化失败直接留下后台异常。
+            # 将状态恢复为未录制，主线程可以正常继续使用软件。
+            with self._lock:
+                self.recording = False
+            print(f"Windows 键鼠录制钩子启动失败: {exc}")
+        finally:
+            if self._keyboard_hook:
+                user32.UnhookWindowsHookEx(self._keyboard_hook)
+                self._keyboard_hook = None
+            if self._mouse_hook:
+                user32.UnhookWindowsHookEx(self._mouse_hook)
+                self._mouse_hook = None
+            self._keyboard_proc = None
+            self._mouse_proc = None
+            self._windows_thread_id = None
 
     def _stop_windows_hooks(self):
         stop = self._windows_stop
         thread = self._windows_thread
+        thread_id = self._windows_thread_id
         self._windows_stop = None
         self._windows_thread = None
+        self._windows_thread_id = None
         if not stop:
             return
         stop.set()
         if thread and thread.is_alive():
-            try:
-                ctypes.windll.user32.PostThreadMessageW(thread.ident, 0x0012, 0, 0)
-            except Exception:
-                pass
+            if thread_id:
+                try:
+                    ctypes.windll.user32.PostThreadMessageW(thread_id, 0x0012, 0, 0)
+                except Exception:
+                    pass
             thread.join(timeout=1.5)
 
     def _windows_vk_name(self, vk: int, scan_code: int, flags: int) -> str:
