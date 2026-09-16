@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QCursor, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox,
@@ -84,6 +84,9 @@ class PointPicker(QDialog):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         painter.setPen(QPen(Qt.GlobalColor.red, 2))
         pos = self.mapFromGlobal(self._mouse_pos)
         painter.drawLine(pos.x() - 16, pos.y(), pos.x() + 16, pos.y())
