@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -14,15 +13,6 @@ from PySide6.QtWidgets import (
 )
 
 from core.model import MacroEvent
-
-
-class _PointPickerRepaintFilter(QObject):
-    """确保选点后透明覆盖层立即重绘已选位置。"""
-
-    def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.MouseButtonPress:
-            QTimer.singleShot(0, watched.repaint)
-        return False
 
 
 class ActionInsertDialog(QDialog):
@@ -166,12 +156,6 @@ class ActionInsertDialog(QDialog):
             self.events = [MacroEvent("delay", delay, {})]
 
         self.accept()
-
-    def install_picker_repaint(self, picker):
-        """给选点窗口安装一次性重绘过滤器。"""
-        repaint_filter = _PointPickerRepaintFilter(picker)
-        picker._repaint_filter = repaint_filter
-        picker.installEventFilter(repaint_filter)
 
 
 # 兼容宏编辑器当前使用的旧类名。
