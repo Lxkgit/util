@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import ctypes
+import queue
 import sys
 import time
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 
 from pynput import keyboard, mouse
 
@@ -22,10 +23,18 @@ class MacroRecorder:
         self._last_time = 0.0
         self._keyboard_listener = None
         self._mouse_listener = None
+
         self._windows_hook_thread = None
         self._windows_hook_thread_id = 0
         self._windows_keyboard_hook = None
         self._windows_mouse_hook = None
+        self._windows_hook_error = None
+        self._windows_hook_ready = Event()
+
+        self._input_queue: queue.Queue[tuple[float, str, tuple]] = queue.Queue()
+        self._input_worker = None
+        self._input_worker_stop = Event()
+
         self._pressed_keys: set[str] = set()
         self._ignored_keys: set[str] = set()
         self._last_move_time = 0.0
@@ -33,6 +42,13 @@ class MacroRecorder:
         self.move_interval = 0.02
         self.move_distance = 2
         self._windows = sys.platform.startswith("win")
+
+        self._diagnostics = {
+            "keyboard_hook": 0,
+            "mouse_hook": 0,
+            "queue": 0,
+            "saved": 0,
+        }
 
     def set_mode(self, mode: str):
         if mode not in self.MODES:
@@ -43,10 +59,19 @@ class MacroRecorder:
         with self._lock:
             self._ignored_keys = {self._normalize_key_name(key) for key in keys}
 
+    def get_diagnostics(self) -> dict:
+        with self._lock:
+            result = dict(self._diagnostics)
+            result["queue_pending"] = self._input_queue.qsize()
+            result["hook_ready"] = self._windows_hook_ready.is_set()
+            result["hook_error"] = self._windows_hook_error
+            return result
+
     def start(self, mode: str | None = None):
         if mode:
             self.set_mode(mode)
         self.stop()
+
         with self._lock:
             self.recording = True
             self.paused = False
@@ -54,6 +79,18 @@ class MacroRecorder:
             self._last_move_time = self._last_time
             self._last_move_pos = None
             self._pressed_keys.clear()
+            self._windows_hook_error = None
+            for key in self._diagnostics:
+                self._diagnostics[key] = 0
+
+        self._input_queue = queue.Queue()
+        self._input_worker_stop.clear()
+        self._input_worker = Thread(
+            target=self._input_worker_main,
+            daemon=True,
+            name="macro-input-worker",
+        )
+        self._input_worker.start()
 
         if self._windows:
             self._start_windows_hook()
@@ -110,12 +147,21 @@ class MacroRecorder:
             self._last_move_pos = None
 
         if self._windows_hook_thread:
-            user32 = ctypes.WinDLL("user32", use_last_error=True)
-            if self._windows_hook_thread_id:
-                post_thread_message = user32.PostThreadMessageW
-                post_thread_message.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_size_t, ctypes.c_ssize_t]
-                post_thread_message.restype = ctypes.c_bool
-                post_thread_message(self._windows_hook_thread_id, 0x0012, 0, 0)
+            try:
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                if self._windows_hook_thread_id:
+                    post_thread_message = user32.PostThreadMessageW
+                    post_thread_message.argtypes = [
+                        ctypes.c_uint32,
+                        ctypes.c_uint32,
+                        ctypes.c_size_t,
+                        ctypes.c_ssize_t,
+                    ]
+                    post_thread_message.restype = ctypes.c_bool
+                    post_thread_message(self._windows_hook_thread_id, 0x0012, 0, 0)
+            except Exception as exc:
+                self._windows_hook_error = f"停止 Windows Hook 失败: {exc}"
+
             try:
                 self._windows_hook_thread.join(timeout=1.5)
             except RuntimeError:
@@ -124,6 +170,7 @@ class MacroRecorder:
             self._windows_hook_thread_id = 0
             self._windows_keyboard_hook = None
             self._windows_mouse_hook = None
+            self._windows_hook_ready.clear()
 
         for attr in ("_keyboard_listener", "_mouse_listener"):
             listener = getattr(self, attr)
@@ -135,15 +182,49 @@ class MacroRecorder:
                 except (RuntimeError, AttributeError):
                     pass
 
+        self._input_worker_stop.set()
+        worker = self._input_worker
+        self._input_worker = None
+        if worker:
+            try:
+                worker.join(timeout=1.5)
+            except RuntimeError:
+                pass
+
     def _start_windows_hook(self):
         if self._windows_hook_thread is not None:
             return
+        self._windows_hook_ready.clear()
         self._windows_hook_thread = Thread(
             target=self._windows_hook_thread_main,
             daemon=True,
             name="windows-input-hook",
         )
         self._windows_hook_thread.start()
+
+    def _queue_input(self, event_type: str, *data):
+        timestamp = time.perf_counter()
+        self._input_queue.put((timestamp, event_type, data))
+        with self._lock:
+            self._diagnostics["queue"] += 1
+
+    def _input_worker_main(self):
+        while not self._input_worker_stop.is_set() or not self._input_queue.empty():
+            try:
+                timestamp, event_type, data = self._input_queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
+
+            if event_type == "key_down":
+                self._process_key(timestamp, data[0], True)
+            elif event_type == "key_up":
+                self._process_key(timestamp, data[0], False)
+            elif event_type == "mouse_move":
+                self._process_move(timestamp, data[0], data[1])
+            elif event_type == "mouse_button":
+                self._process_mouse_button(timestamp, data[0], data[1], data[2], data[3])
+            elif event_type == "mouse_scroll":
+                self._process_scroll(timestamp, data[0], data[1], data[2], data[3])
 
     def _windows_hook_thread_main(self):
         user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -155,12 +236,23 @@ class MacroRecorder:
         self._windows_hook_thread_id = int(thread_id())
 
         peek_message = user32.PeekMessageW
-        peek_message.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
+        peek_message.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+        ]
         peek_message.restype = ctypes.c_bool
         peek_message(None, None, 0, 0, 0)
 
         LRESULT = ctypes.c_ssize_t
-        HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, ctypes.c_size_t, ctypes.c_void_p)
+        HOOKPROC = ctypes.WINFUNCTYPE(
+            LRESULT,
+            ctypes.c_int,
+            ctypes.c_size_t,
+            ctypes.c_void_p,
+        )
 
         class KBDLLHOOKSTRUCT(ctypes.Structure):
             _fields_ = [
@@ -186,13 +278,28 @@ class MacroRecorder:
         keyboard_hook = None
         mouse_hook = None
 
-        user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t, ctypes.c_void_p]
+        user32.CallNextHookEx.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_size_t,
+            ctypes.c_void_p,
+        ]
         user32.CallNextHookEx.restype = LRESULT
-        user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, ctypes.c_void_p, ctypes.c_uint32]
+        user32.SetWindowsHookExW.argtypes = [
+            ctypes.c_int,
+            HOOKPROC,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+        ]
         user32.SetWindowsHookExW.restype = ctypes.c_void_p
         user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
         user32.UnhookWindowsHookEx.restype = ctypes.c_bool
-        user32.GetMessageW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
+        user32.GetMessageW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+        ]
         user32.GetMessageW.restype = ctypes.c_int
         user32.TranslateMessage.argtypes = [ctypes.c_void_p]
         user32.TranslateMessage.restype = ctypes.c_bool
@@ -201,72 +308,137 @@ class MacroRecorder:
 
         @HOOKPROC
         def keyboard_proc(n_code, w_param, l_param):
-            # 必须先把输入继续交给 Windows，避免截图快捷键被录制回调阻塞。
-            result = user32.CallNextHookEx(keyboard_hook or 0, n_code, w_param, l_param)
-            if n_code >= 0 and l_param:
-                try:
-                    data = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+            try:
+                if n_code >= 0 and l_param:
+                    data = ctypes.cast(
+                        l_param,
+                        ctypes.POINTER(KBDLLHOOKSTRUCT),
+                    ).contents
                     msg = int(w_param)
                     if msg in (0x0100, 0x0104):
-                        self._on_windows_vk(data.vkCode, True)
+                        with self._lock:
+                            self._diagnostics["keyboard_hook"] += 1
+                        self._queue_input("key_down", int(data.vkCode))
                     elif msg in (0x0101, 0x0105):
-                        self._on_windows_vk(data.vkCode, False)
-                except Exception:
-                    pass
-            return result
+                        with self._lock:
+                            self._diagnostics["keyboard_hook"] += 1
+                        self._queue_input("key_up", int(data.vkCode))
+            except Exception:
+                pass
+
+            # Hook 回调必须尽快返回；系统输入永远不在这里做业务处理。
+            return user32.CallNextHookEx(
+                keyboard_hook or 0,
+                n_code,
+                w_param,
+                l_param,
+            )
 
         @HOOKPROC
         def mouse_proc(n_code, w_param, l_param):
-            # 鼠标输入同样先继续传递，再记录，确保系统 UI 可以正常响应。
-            result = user32.CallNextHookEx(mouse_hook or 0, n_code, w_param, l_param)
-            if n_code >= 0 and l_param:
-                try:
-                    data = ctypes.cast(l_param, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+            try:
+                if n_code >= 0 and l_param:
+                    data = ctypes.cast(
+                        l_param,
+                        ctypes.POINTER(MSLLHOOKSTRUCT),
+                    ).contents
                     msg = int(w_param)
                     x, y = int(data.pt.x), int(data.pt.y)
                     if msg == 0x0200:
-                        self._on_move(x, y)
+                        with self._lock:
+                            self._diagnostics["mouse_hook"] += 1
+                        self._queue_input("mouse_move", x, y)
                     elif msg == 0x0201:
-                        self._on_mouse_button(x, y, "left", True)
+                        with self._lock:
+                            self._diagnostics["mouse_hook"] += 1
+                        self._queue_input("mouse_button", x, y, "left", True)
                     elif msg == 0x0202:
-                        self._on_mouse_button(x, y, "left", False)
+                        with self._lock:
+                            self._diagnostics["mouse_hook"] += 1
+                        self._queue_input("mouse_button", x, y, "left", False)
                     elif msg == 0x0204:
-                        self._on_mouse_button(x, y, "right", True)
+                        with self._lock:
+                            self._diagnostics["mouse_hook"] += 1
+                        self._queue_input("mouse_button", x, y, "right", True)
                     elif msg == 0x0205:
-                        self._on_mouse_button(x, y, "right", False)
+                        with self._lock:
+                            self._diagnostics["mouse_hook"] += 1
+                        self._queue_input("mouse_button", x, y, "right", False)
                     elif msg == 0x0207:
-                        self._on_mouse_button(x, y, "middle", True)
+                        with self._lock:
+                            self._diagnostics["mouse_hook"] += 1
+                        self._queue_input("mouse_button", x, y, "middle", True)
                     elif msg == 0x0208:
-                        self._on_mouse_button(x, y, "middle", False)
+                        with self._lock:
+                            self._diagnostics["mouse_hook"] += 1
+                        self._queue_input("mouse_button", x, y, "middle", False)
                     elif msg == 0x020A:
+                        with self._lock:
+                            self._diagnostics["mouse_hook"] += 1
                         delta = ctypes.c_short((data.mouseData >> 16) & 0xFFFF).value
-                        self._add("mouse_scroll", {"x": x, "y": y, "dx": 0, "dy": delta // 120 if delta else 0})
+                        self._queue_input(
+                            "mouse_scroll",
+                            x,
+                            y,
+                            0,
+                            delta // 120 if delta else 0,
+                        )
                     elif msg == 0x020E:
+                        with self._lock:
+                            self._diagnostics["mouse_hook"] += 1
                         delta = ctypes.c_short((data.mouseData >> 16) & 0xFFFF).value
-                        self._add("mouse_scroll", {"x": x, "y": y, "dx": delta // 120 if delta else 0, "dy": 0})
-                except Exception:
-                    pass
-            return result
+                        self._queue_input(
+                            "mouse_scroll",
+                            x,
+                            y,
+                            delta // 120 if delta else 0,
+                            0,
+                        )
+            except Exception:
+                pass
+
+            return user32.CallNextHookEx(
+                mouse_hook or 0,
+                n_code,
+                w_param,
+                l_param,
+            )
 
         try:
-            user32.PostThreadMessageW.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_size_t, ctypes.c_ssize_t]
+            user32.PostThreadMessageW.argtypes = [
+                ctypes.c_uint32,
+                ctypes.c_uint32,
+                ctypes.c_size_t,
+                ctypes.c_ssize_t,
+            ]
             user32.PostThreadMessageW.restype = ctypes.c_bool
             kernel32.GetModuleHandleW.argtypes = [ctypes.c_wchar_p]
             kernel32.GetModuleHandleW.restype = ctypes.c_void_p
             hinst = kernel32.GetModuleHandleW(None)
 
             if self.mode in {"all", "keyboard"}:
-                keyboard_hook = user32.SetWindowsHookExW(13, keyboard_proc, hinst, 0)
+                keyboard_hook = user32.SetWindowsHookExW(
+                    13,
+                    keyboard_proc,
+                    hinst,
+                    0,
+                )
                 if not keyboard_hook:
                     raise ctypes.WinError(ctypes.get_last_error())
                 self._windows_keyboard_hook = keyboard_hook
 
             if self.mode in {"all", "mouse"}:
-                mouse_hook = user32.SetWindowsHookExW(14, mouse_proc, hinst, 0)
+                mouse_hook = user32.SetWindowsHookExW(
+                    14,
+                    mouse_proc,
+                    hinst,
+                    0,
+                )
                 if not mouse_hook:
                     raise ctypes.WinError(ctypes.get_last_error())
                 self._windows_mouse_hook = mouse_hook
 
+            self._windows_hook_ready.set()
             msg = ctypes.create_string_buffer(48)
             while True:
                 result = user32.GetMessageW(msg, None, 0, 0)
@@ -274,23 +446,141 @@ class MacroRecorder:
                     break
                 user32.TranslateMessage(msg)
                 user32.DispatchMessageW(msg)
-        except Exception:
-            self._windows_keyboard_hook = None
-            self._windows_mouse_hook = None
+        except Exception as exc:
+            self._windows_hook_error = f"Windows Hook 初始化失败: {exc}"
+            print(self._windows_hook_error, file=sys.stderr)
         finally:
             if keyboard_hook:
                 user32.UnhookWindowsHookEx(keyboard_hook)
             if mouse_hook:
                 user32.UnhookWindowsHookEx(mouse_hook)
+            self._windows_hook_ready.clear()
 
-    def _on_windows_vk(self, vk: int, pressed: bool):
-        name = self._windows_vk_name(vk)
+    def _process_key(self, timestamp: float, vk: int, pressed: bool):
+        name = self._windows_vk_name(vk) if self._windows else None
         if name is None:
             return
         if pressed:
-            self._on_key_press_name(name)
+            self._process_key_press(timestamp, name)
         else:
-            self._on_key_release_name(name)
+            self._process_key_release(timestamp, name)
+
+    def _process_key_press(self, timestamp: float, name: str):
+        with self._lock:
+            if not self.recording or self.paused or name in self._ignored_keys or name in self._pressed_keys:
+                return
+            self._pressed_keys.add(name)
+        self._add_at(timestamp, "key_down", {"key": name})
+
+    def _process_key_release(self, timestamp: float, name: str):
+        with self._lock:
+            if not self.recording or self.paused or name in self._ignored_keys:
+                return
+            self._pressed_keys.discard(name)
+        self._add_at(timestamp, "key_up", {"key": name})
+
+    def _on_windows_vk(self, vk: int, pressed: bool):
+        if pressed:
+            self._on_key_press_name(self._windows_vk_name(vk))
+        else:
+            self._on_key_release_name(self._windows_vk_name(vk))
+
+    def _on_key_press_name(self, name: str | None):
+        if name is None:
+            return
+        self._queue_input("key_down", name)
+
+    def _on_key_release_name(self, name: str | None):
+        if name is None:
+            return
+        self._queue_input("key_up", name)
+
+    def _on_key_press(self, key):
+        self._queue_input("key_down", self._key_name(key))
+
+    def _on_key_release(self, key):
+        self._queue_input("key_up", self._key_name(key))
+
+    def _process_move(self, timestamp: float, x: int, y: int):
+        if self.mode not in {"all", "mouse"}:
+            return
+        with self._lock:
+            if not self.recording or self.paused:
+                return
+            last = self._last_move_pos
+            if last is not None:
+                dx, dy = x - last[0], y - last[1]
+                if (
+                    timestamp - self._last_move_time < self.move_interval
+                    and dx * dx + dy * dy < self.move_distance ** 2
+                ):
+                    return
+            self._last_move_time = timestamp
+            self._last_move_pos = (x, y)
+        self._add_at(timestamp, "mouse_move", {"x": int(x), "y": int(y)})
+
+    def _process_mouse_button(self, timestamp: float, x: int, y: int, button: str, pressed: bool):
+        if self.mode not in {"all", "mouse"}:
+            return
+        self._add_at(
+            timestamp,
+            "mouse_click",
+            {
+                "x": int(x),
+                "y": int(y),
+                "button": button,
+                "pressed": bool(pressed),
+            },
+        )
+
+    def _process_scroll(self, timestamp: float, x: int, y: int, dx: int, dy: int):
+        if self.mode not in {"all", "mouse"}:
+            return
+        self._add_at(
+            timestamp,
+            "mouse_scroll",
+            {
+                "x": int(x),
+                "y": int(y),
+                "dx": int(dx),
+                "dy": int(dy),
+            },
+        )
+
+    def _add_at(self, timestamp: float, event_type: str, data: dict):
+        with self._lock:
+            if not self.recording or self.paused:
+                return
+            event = MacroEvent(
+                event_type,
+                max(0.0, timestamp - self._last_time),
+                data,
+            )
+            self._last_time = timestamp
+            self._diagnostics["saved"] += 1
+        if self.on_event:
+            self.on_event(event)
+
+    def _add(self, event_type: str, data: dict):
+        self._add_at(time.perf_counter(), event_type, data)
+
+    def _on_move(self, x, y):
+        self._queue_input("mouse_move", int(x), int(y))
+
+    def _on_mouse_button(self, x, y, button, pressed):
+        self._queue_input(
+            "mouse_button",
+            int(x),
+            int(y),
+            str(button).replace("Button.", ""),
+            bool(pressed),
+        )
+
+    def _on_click(self, x, y, button, pressed):
+        self._on_mouse_button(x, y, button, pressed)
+
+    def _on_scroll(self, x, y, dx, dy):
+        self._queue_input("mouse_scroll", int(x), int(y), int(dx), int(dy))
 
     @staticmethod
     def _windows_vk_name(vk: int) -> str | None:
@@ -328,64 +618,3 @@ class MacroRecorder:
         if isinstance(key, keyboard.KeyCode):
             return cls._normalize_key_name(key.char if key.char else str(key))
         return cls._normalize_key_name(str(key))
-
-    def _on_key_press_name(self, name: str):
-        with self._lock:
-            if not self.recording or self.paused or name in self._ignored_keys or name in self._pressed_keys:
-                return
-            self._pressed_keys.add(name)
-        self._add("key_down", {"key": name})
-
-    def _on_key_release_name(self, name: str):
-        with self._lock:
-            if not self.recording or self.paused or name in self._ignored_keys:
-                return
-            self._pressed_keys.discard(name)
-        self._add("key_up", {"key": name})
-
-    def _on_key_press(self, key):
-        self._on_key_press_name(self._key_name(key))
-
-    def _on_key_release(self, key):
-        self._on_key_release_name(self._key_name(key))
-
-    def _add(self, event_type: str, data: dict):
-        with self._lock:
-            if not self.recording or self.paused:
-                return
-            now = time.perf_counter()
-            event = MacroEvent(event_type, max(0.0, now - self._last_time), data)
-            self._last_time = now
-        if self.on_event:
-            self.on_event(event)
-
-    def _on_move(self, x, y):
-        if self.mode not in {"all", "mouse"}:
-            return
-        now = time.perf_counter()
-        with self._lock:
-            if not self.recording or self.paused:
-                return
-            last = self._last_move_pos
-            if last is not None:
-                dx, dy = x - last[0], y - last[1]
-                if now - self._last_move_time < self.move_interval and dx * dx + dy * dy < self.move_distance ** 2:
-                    return
-            self._last_move_time = now
-            self._last_move_pos = (x, y)
-        self._add("mouse_move", {"x": int(x), "y": int(y)})
-
-    def _on_mouse_button(self, x, y, button, pressed):
-        if self.mode not in {"all", "mouse"}:
-            return
-        self._add("mouse_click", {"x": int(x), "y": int(y), "button": button, "pressed": bool(pressed)})
-
-    def _on_click(self, x, y, button, pressed):
-        if self.mode not in {"all", "mouse"}:
-            return
-        self._on_mouse_button(x, y, str(button).replace("Button.", ""), pressed)
-
-    def _on_scroll(self, x, y, dx, dy):
-        if self.mode not in {"all", "mouse"}:
-            return
-        self._add("mouse_scroll", {"x": int(x), "y": int(y), "dx": int(dx), "dy": int(dy)})
