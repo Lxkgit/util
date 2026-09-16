@@ -1,86 +1,20 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
-from ui.macro_editor import MacroEditorDialog
 from ui.main_window import MainWindow
 
 
 class EnhancedMainWindow(MainWindow):
     def __init__(self):
         super().__init__()
-        self._simplify_main_page()
         self._build_countdown_overlay()
         self._play_prepare_timer = QTimer(self)
         self._play_prepare_timer.setSingleShot(True)
         self._play_prepare_timer.timeout.connect(self._start_prepared_playback)
         self._play_prepare_events = None
         self._play_prepare_repeat = 1
-        self._refresh()
-
-    def _simplify_main_page(self):
-        self.list.hide()
-        for widget in (
-            self.edit_button,
-            self.duplicate_button,
-            self.up_button,
-            self.down_button,
-            self.delete_button,
-        ):
-            widget.hide()
-
-        editor_button = QPushButton("✎  打开宏编辑器")
-        editor_button.setMinimumHeight(38)
-        editor_button.clicked.connect(self.open_macro_editor)
-        controls = self.record_btn.parentWidget().layout()
-        controls.addWidget(editor_button)
-        self.editor_button = editor_button
-
-        root = self.centralWidget()
-        layout = root.layout()
-        summary = QFrame()
-        summary.setObjectName("macroSummary")
-        summary.setStyleSheet(
-            "QFrame#macroSummary{background:white;border:1px solid #e4e7ed;border-radius:12px;}"
-            "QLabel#summaryTitle{font-size:16px;font-weight:700;}"
-            "QLabel#summaryText{color:#7a8491;}"
-        )
-        summary_layout = QHBoxLayout(summary)
-        summary_layout.setContentsMargins(16, 12, 16, 12)
-        title_box = QVBoxLayout()
-        title = QLabel("当前宏")
-        title.setObjectName("summaryTitle")
-        self.summary_text = QLabel()
-        self.summary_text.setObjectName("summaryText")
-        title_box.addWidget(title)
-        title_box.addWidget(self.summary_text)
-        summary_layout.addLayout(title_box, 1)
-        open_editor = QPushButton("编辑宏")
-        open_editor.clicked.connect(self.open_macro_editor)
-        summary_layout.addWidget(open_editor)
-        layout.insertWidget(layout.indexOf(self.progress) + 1, summary)
-        self.summary_panel = summary
-
-    def open_macro_editor(self):
-        if self.recorder.recording or self._pending or self.player.running:
-            self.status.setText("请先停止当前录制或播放，再打开宏编辑器")
-            return
-        dialog = MacroEditorDialog(self.events, self)
-        if dialog.exec():
-            self.events = dialog.events
-            self._reload_event_list(-1)
-            self.progress.setValue(0)
-            self.status.setText(f"宏已更新，共 {len(self.events)} 个操作")
-            self._refresh()
-
-    def _refresh(self):
-        super()._refresh()
-        if hasattr(self, "summary_text"):
-            if not self.events:
-                self.summary_text.setText("暂无操作，可以录制新宏或打开编辑器手动创建")
-            else:
-                self.summary_text.setText(f"共 {len(self.events)} 个操作，打开宏编辑器可详细编辑和安全预览")
 
     def _build_countdown_overlay(self):
         root = self.centralWidget()
@@ -97,6 +31,7 @@ class EnhancedMainWindow(MainWindow):
         overlay_layout = QVBoxLayout(self.countdown_overlay)
         overlay_layout.setContentsMargins(20, 18, 20, 18)
         overlay_layout.setSpacing(4)
+
         title = QLabel("准备录制")
         title.setObjectName("countdownTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -106,6 +41,7 @@ class EnhancedMainWindow(MainWindow):
         self.countdown_hint = QLabel()
         self.countdown_hint.setObjectName("countdownHint")
         self.countdown_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         overlay_layout.addWidget(title)
         overlay_layout.addWidget(self.countdown_number, 1)
         overlay_layout.addWidget(self.countdown_hint)
@@ -165,7 +101,7 @@ class EnhancedMainWindow(MainWindow):
         self.countdown_overlay.hide()
 
     def play(self):
-        """播放前隐藏自身并短暂等待，让目标窗口获得前台焦点。"""
+        """播放前隐藏自身，让目标窗口获得前台焦点。"""
         if self.recorder.recording:
             self.stop_recording()
         if not self.events:
