@@ -18,6 +18,8 @@ class MacroPlayer:
         self._pause = Event()
         self.running = False
         self.paused = False
+        self._pressed_keys = set()
+        self._pressed_buttons = set()
 
     def play(self, events: list[MacroEvent], repeat: int = 1) -> bool:
         if self.running or not events:
@@ -25,6 +27,8 @@ class MacroPlayer:
 
         self._stop.clear()
         self._pause.clear()
+        self._pressed_keys.clear()
+        self._pressed_buttons.clear()
         self.running = True
         self.paused = False
         Thread(target=self._run, args=(list(events), repeat), daemon=True).start()
@@ -68,6 +72,7 @@ class MacroPlayer:
         except Exception as exc:
             self._state(f"播放异常：{exc}")
         finally:
+            self._release_all_inputs()
             self.running = False
             self.paused = False
             if not self._stop.is_set():
@@ -95,9 +100,13 @@ class MacroPlayer:
         if event.type == "delay":
             return
         if event.type == "key_down":
-            self.keyboard.press(self._key(data["key"]))
+            key = self._key(data["key"])
+            self.keyboard.press(key)
+            self._pressed_keys.add(key)
         elif event.type == "key_up":
-            self.keyboard.release(self._key(data["key"]))
+            key = self._key(data["key"])
+            self.keyboard.release(key)
+            self._pressed_keys.discard(key)
         elif event.type == "mouse_move":
             self.mouse.position = (int(data["x"]), int(data["y"]))
         elif event.type == "mouse_click":
@@ -105,11 +114,29 @@ class MacroPlayer:
             button = getattr(mouse.Button, data["button"])
             if data["pressed"]:
                 self.mouse.press(button)
+                self._pressed_buttons.add(button)
             else:
                 self.mouse.release(button)
+                self._pressed_buttons.discard(button)
         elif event.type == "mouse_scroll":
             self.mouse.position = (int(data["x"]), int(data["y"]))
             self.mouse.scroll(int(data["dx"]), int(data["dy"]))
+
+    def _release_all_inputs(self):
+        """无论宏如何结束，都释放播放线程曾按下但尚未释放的输入。"""
+        for key in list(self._pressed_keys):
+            try:
+                self.keyboard.release(key)
+            except Exception:
+                pass
+        self._pressed_keys.clear()
+
+        for button in list(self._pressed_buttons):
+            try:
+                self.mouse.release(button)
+            except Exception:
+                pass
+        self._pressed_buttons.clear()
 
     @staticmethod
     def _key(name: str):
