@@ -53,8 +53,8 @@ class HotkeyService:
             self._spec(stop_playback): lambda: self.on_action("stop_playback"),
         }
 
-        # 明确关闭系统级输入抑制。
-        # 热键只负责监听快捷键，不能阻断用户正常的键盘输入。
+        # 只监听，不拦截系统输入。
+        # 截图、游戏等其他软件的组合快捷键必须能够正常到达系统。
         self.listener = keyboard.GlobalHotKeys(hotkeys, suppress=False)
         self.listener.start()
 
@@ -70,11 +70,20 @@ class HotkeyService:
             pass
 
     def ignored_keys(self, *shortcuts: str) -> set[str]:
+        """
+        返回需要从录制内容中排除的控制键。
+
+        只有单键控制快捷键才排除，例如 F8/F9/F10/F11。
+        组合快捷键不能简单排除其中的每一个按键，否则像 Alt+A、Ctrl+Shift+S
+        这样的正常系统快捷键会被误认为控制键，导致截图等操作无法被录制。
+        组合控制快捷键仍由 GlobalHotKeys 负责触发控制动作，但其按键本身允许
+        进入录制数据，从而保证屏幕级宏可以完整记录真实键盘操作。
+        """
         keys = set()
         for shortcut in shortcuts:
-            for part in self.normalize(shortcut).split("+"):
-                if part:
-                    keys.add(part)
+            parts = [part for part in self.normalize(shortcut).split("+") if part]
+            if len(parts) == 1:
+                keys.add(parts[0])
         return keys
 
     def _spec(self, value: str) -> str:
