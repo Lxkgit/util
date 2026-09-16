@@ -1,102 +1,57 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QDoubleSpinBox,
-    QFormLayout,
-    QLabel,
-    QLineEdit,
-    QSpinBox,
-    QVBoxLayout,
-)
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QLabel, QLineEdit, QVBoxLayout
 
 from core.model import MacroEvent
 
 
 class ActionInsertDialog(QDialog):
-    ACTIONS = (
-        ("key", "键盘按键"),
-        ("click", "鼠标点击"),
-        ("move", "鼠标移动"),
-        ("scroll", "滚轮"),
-        ("delay", "延迟"),
-    )
+    """键盘/等待操作编辑器。鼠标操作统一由 macro_editor 的全屏选点界面处理。"""
 
     def __init__(self, action: str = "key", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("添加操作")
-        self.setModal(True)
-        self.resize(460, 320)
+        self.action = action
         self.events: list[MacroEvent] = []
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(14)
-        self.action_combo = QComboBox()
-        for value, name in self.ACTIONS:
-            self.action_combo.addItem(name, value)
-        self.action_combo.setCurrentIndex(max(0, self.action_combo.findData(action)))
-        self.action_combo.currentIndexChanged.connect(self._rebuild_form)
-        layout.addWidget(QLabel("操作类型"))
-        layout.addWidget(self.action_combo)
-        self.form = QFormLayout()
-        layout.addLayout(self.form)
+        self.setWindowTitle("添加键盘操作" if action == "key" else "添加等待")
+        self.resize(460, 260)
+        self.setStyleSheet("QDialog{background:#f5f7fa;} QLabel{color:#303133;} QLineEdit,QDoubleSpinBox{min-height:34px;border:1px solid #dcdfe6;border-radius:7px;padding:0 9px;background:white;} QDialogButtonBox QPushButton{min-height:34px;padding:0 15px;border-radius:7px;}")
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(14)
+        title = QLabel("键盘按键" if action == "key" else "添加等待")
+        title.setStyleSheet("font-size:20px;font-weight:700;")
+        root.addWidget(title)
+        form = QFormLayout()
         self.delay = QDoubleSpinBox()
-        self.delay.setRange(0.0, 999999.0)
+        self.delay.setRange(0, 999999)
         self.delay.setDecimals(3)
-        self.delay.setSingleStep(0.01)
         self.delay.setSuffix(" 秒")
         self.key_edit = QLineEdit("enter")
         self.key_edit.setPlaceholderText("例如 a、enter、ctrl、f5")
-        self.x_spin = QSpinBox(); self.x_spin.setRange(-99999, 99999)
-        self.y_spin = QSpinBox(); self.y_spin.setRange(-99999, 99999)
-        self.dx_spin = QSpinBox(); self.dx_spin.setRange(-99999, 99999)
-        self.dy_spin = QSpinBox(); self.dy_spin.setRange(-99999, 99999)
-        self.button_combo = QComboBox()
-        self.button_combo.addItems(["left", "right", "middle"])
-        self._rebuild_form()
+        if action == "key":
+            form.addRow("按键", self.key_edit)
+            form.addRow("执行前延迟", self.delay)
+        else:
+            form.addRow("等待时间", self.delay)
+        root.addLayout(form)
+        hint = QLabel("提示：鼠标点击、移动、滚轮请使用对应按钮进入全屏选点。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#909399;")
+        if action == "key": root.addWidget(hint)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _clear_form(self):
-        while self.form.rowCount():
-            self.form.removeRow(0)
-
-    def _rebuild_form(self):
-        self._clear_form()
-        action = self.action_combo.currentData()
-        if action == "key":
-            self.form.addRow("按键", self.key_edit)
-            self.form.addRow("执行前延迟", self.delay)
-        elif action == "click":
-            self.form.addRow("X", self.x_spin); self.form.addRow("Y", self.y_spin)
-            self.form.addRow("鼠标按钮", self.button_combo); self.form.addRow("执行前延迟", self.delay)
-        elif action == "move":
-            self.form.addRow("X", self.x_spin); self.form.addRow("Y", self.y_spin); self.form.addRow("执行前延迟", self.delay)
-        elif action == "scroll":
-            self.form.addRow("X", self.x_spin); self.form.addRow("Y", self.y_spin)
-            self.form.addRow("水平滚动", self.dx_spin); self.form.addRow("垂直滚动", self.dy_spin); self.form.addRow("执行前延迟", self.delay)
-        else:
-            self.form.addRow("等待时间", self.delay)
+        root.addWidget(buttons)
 
     def _accept(self):
-        action = self.action_combo.currentData()
         delay = round(self.delay.value(), 3)
-        if action == "key":
+        if self.action == "key":
             key = self.key_edit.text().strip().lower()
             if not key:
-                self.key_edit.setFocus(); return
+                self.key_edit.setFocus()
+                return
             self.events = [MacroEvent("key_down", delay, {"key": key}), MacroEvent("key_up", 0.0, {"key": key})]
-        elif action == "click":
-            data = {"x": self.x_spin.value(), "y": self.y_spin.value(), "button": self.button_combo.currentText()}
-            self.events = [MacroEvent("mouse_click", delay, {**data, "pressed": True}), MacroEvent("mouse_click", 0.0, {**data, "pressed": False})]
-        elif action == "move":
-            self.events = [MacroEvent("mouse_move", delay, {"x": self.x_spin.value(), "y": self.y_spin.value()})]
-        elif action == "scroll":
-            self.events = [MacroEvent("mouse_scroll", delay, {"x": self.x_spin.value(), "y": self.y_spin.value(), "dx": self.dx_spin.value(), "dy": self.dy_spin.value()})]
         else:
             self.events = [MacroEvent("delay", delay, {})]
         self.accept()
