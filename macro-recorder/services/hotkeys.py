@@ -53,13 +53,21 @@ class HotkeyService:
             self._spec(stop_playback): lambda: self.on_action("stop_playback"),
         }
 
-        self.listener = keyboard.GlobalHotKeys(hotkeys)
+        # 明确关闭系统级输入抑制。
+        # 热键只负责监听快捷键，不能阻断用户正常的键盘输入。
+        self.listener = keyboard.GlobalHotKeys(hotkeys, suppress=False)
         self.listener.start()
 
     def stop(self):
-        if self.listener:
-            self.listener.stop()
-            self.listener = None
+        listener = self.listener
+        self.listener = None
+        if not listener:
+            return
+        listener.stop()
+        try:
+            listener.join(timeout=1.0)
+        except RuntimeError:
+            pass
 
     def ignored_keys(self, *shortcuts: str) -> set[str]:
         keys = set()
