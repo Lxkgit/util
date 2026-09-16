@@ -4,7 +4,7 @@ import ctypes
 import sys
 import time
 from ctypes import wintypes
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 
 from pynput import keyboard, mouse
 
@@ -130,13 +130,8 @@ class MacroRecorder:
             except RuntimeError:
                 pass
 
-    # ---------------- Windows 原生低级钩子 ----------------
-
     def _start_windows_hooks(self):
-        if self.mode not in {"all", "keyboard", "mouse"}:
-            return
-
-        self._windows_stop = __import__("threading").Event()
+        self._windows_stop = Event()
         self._windows_thread = Thread(target=self._windows_hook_thread, daemon=True)
         self._windows_thread.start()
 
@@ -146,12 +141,13 @@ class MacroRecorder:
         WH_KEYBOARD_LL = 13
         WH_MOUSE_LL = 14
         WM_QUIT = 0x0012
+        LRESULT = ctypes.c_ssize_t
 
         LowLevelKeyboardProc = ctypes.WINFUNCTYPE(
-            wintypes.LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
+            LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
         )
         LowLevelMouseProc = ctypes.WINFUNCTYPE(
-            wintypes.LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
+            LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
         )
 
         class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -160,7 +156,7 @@ class MacroRecorder:
                 ("scanCode", wintypes.DWORD),
                 ("flags", wintypes.DWORD),
                 ("time", wintypes.DWORD),
-                ("dwExtraInfo", wintypes.ULONG_PTR),
+                ("dwExtraInfo", ctypes.c_size_t),
             ]
 
         class POINT(ctypes.Structure):
@@ -172,11 +168,11 @@ class MacroRecorder:
                 ("mouseData", wintypes.DWORD),
                 ("flags", wintypes.DWORD),
                 ("time", wintypes.DWORD),
-                ("dwExtraInfo", wintypes.ULONG_PTR),
+                ("dwExtraInfo", ctypes.c_size_t),
             ]
 
         def keyboard_proc(n_code, w_param, l_param):
-            if n_code >= 0 and not self._windows_stop.is_set():
+            if n_code >= 0 and self._windows_stop and not self._windows_stop.is_set():
                 info = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
                 vk = int(info.vkCode)
                 is_up = int(w_param) in (0x0101, 0x0105)
@@ -189,7 +185,7 @@ class MacroRecorder:
             return user32.CallNextHookEx(None, n_code, w_param, l_param)
 
         def mouse_proc(n_code, w_param, l_param):
-            if n_code >= 0 and not self._windows_stop.is_set():
+            if n_code >= 0 and self._windows_stop and not self._windows_stop.is_set():
                 info = ctypes.cast(l_param, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                 x, y = int(info.pt.x), int(info.pt.y)
                 msg = int(w_param)
@@ -222,7 +218,7 @@ class MacroRecorder:
             raise ctypes.WinError()
 
         msg = wintypes.MSG()
-        while not self._windows_stop.is_set():
+        while self._windows_stop and not self._windows_stop.is_set():
             result = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
             if result <= 0:
                 break
@@ -243,8 +239,34 @@ class MacroRecorder:
             return
         stop.set()
         if thread and thread.is_alive():
-            ctypes.windll.user32.PostThreadMessageW(thread.ident, 0x0012, 0, 0)
+            try:
+                ctypes.windll.user32.PostThreadMessageW(thread.ident, 0x0012, 0, 0)
+            except Exception:
+                pass
             thread.join(timeout=1.5)
+
+    def _windows_vk_name(self, vk: int, scan_code: int, flags: int) -> str:
+        mapping = {
+            0x08: "backspace", 0x09: "tab", 0x0D: "enter", 0x10: "shift",
+            0x11: "ctrl", 0x12: "alt", 0x13: "pause", 0x14: "caps_lock",
+            0x1B: "esc", 0x20: "space", 0x21: "page_up", 0x22: "page_down",
+            0x23: "end", 0x24: "home", 0x25: "left", 0x26: "up", 0x27: "right",
+            0x28: "down", 0x2D: "insert", 0x2E: "delete", 0x5B: "cmd_l", 0x5C: "cmd_r",
+            0x5D: "menu", 0x70: "f1", 0x71: "f2", 0x72: "f3", 0x73: "f4",
+            0x74: "f5", 0x75: "f6", 0x76: "f7", 0x77: "f8", 0x78: "f9",
+            0x79: "f10", 0x7A: "f11", 0x7B: "f12", 0x90: "num_lock", 0x91: "scroll_lock",
+            0xA0: "shift_l", 0xA1: "shift_r", 0xA2: "ctrl_l", 0xA3: "ctrl_r",
+            0xA4: "alt_l", 0xA5: "alt_r", 0x2C: "print_screen",
+        }
+        if vk in mapping:
+            return mapping[vk]
+        if 0x41 <= vk <= 0x5A:
+            return chr(vk).lower()
+        if 0x30 <= vk <= 0x39:
+            return chr(vk)
+        if 0x60 <= vk <= 0x69:
+            return f"num{vk - 0x60}"
+        return ""
 
     def _on_key_press_name(self, name: str):
         with self._lock:
@@ -259,26 +281,6 @@ class MacroRecorder:
                 return
             self._pressed_keys.discard(name)
         self._add("key_up", {"key": name})
-
-    @staticmethod
-    def _windows_vk_name(vk: int, scan: int, flags: int) -> str | None:
-        special = {
-            0x08: "backspace", 0x09: "tab", 0x0D: "enter", 0x10: "shift",
-            0x11: "ctrl", 0x12: "alt", 0x13: "pause", 0x14: "caps_lock",
-            0x1B: "esc", 0x20: "space", 0x21: "page_up", 0x22: "page_down",
-            0x23: "end", 0x24: "home", 0x25: "left", 0x26: "up", 0x27: "right",
-            0x28: "down", 0x2D: "insert", 0x2E: "delete", 0x2C: "print_screen",
-            0x5B: "cmd", 0x5C: "cmd", 0x5D: "menu", 0x90: "num_lock", 0x91: "scroll_lock",
-        }
-        if vk in special:
-            return special[vk]
-        if 0x30 <= vk <= 0x39 or 0x41 <= vk <= 0x5A:
-            return chr(vk).lower()
-        if 0x70 <= vk <= 0x7B:
-            return f"f{vk - 0x6F}"
-        return None
-
-    # ---------------- 通用事件处理 ----------------
 
     @staticmethod
     def _normalize_key_name(name: str) -> str:
@@ -308,10 +310,20 @@ class MacroRecorder:
             self.on_event(event)
 
     def _on_key_press(self, key):
-        self._on_key_press_name(self._key_name(key))
+        name = self._key_name(key)
+        with self._lock:
+            if not self.recording or self.paused or name in self._ignored_keys or name in self._pressed_keys:
+                return
+            self._pressed_keys.add(name)
+        self._add("key_down", {"key": name})
 
     def _on_key_release(self, key):
-        self._on_key_release_name(self._key_name(key))
+        name = self._key_name(key)
+        with self._lock:
+            if not self.recording or self.paused or name in self._ignored_keys:
+                return
+            self._pressed_keys.discard(name)
+        self._add("key_up", {"key": name})
 
     def _on_move(self, x, y):
         now = time.perf_counter()
