@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from ui.macro_editor import MacroEditorDialog
@@ -12,10 +12,14 @@ class EnhancedMainWindow(MainWindow):
         super().__init__()
         self._simplify_main_page()
         self._build_countdown_overlay()
+        self._play_prepare_timer = QTimer(self)
+        self._play_prepare_timer.setSingleShot(True)
+        self._play_prepare_timer.timeout.connect(self._start_prepared_playback)
+        self._play_prepare_events = None
+        self._play_prepare_repeat = 1
         self._refresh()
 
     def _simplify_main_page(self):
-        # 编辑相关内容全部移入独立宏编辑器，主页面只负责录制、播放和文件管理。
         self.list.hide()
         for widget in (
             self.edit_button,
@@ -55,7 +59,6 @@ class EnhancedMainWindow(MainWindow):
         open_editor = QPushButton("编辑宏")
         open_editor.clicked.connect(self.open_macro_editor)
         summary_layout.addWidget(open_editor)
-        # 原事件列表所在位置替换成简洁摘要。
         layout.insertWidget(layout.indexOf(self.progress) + 1, summary)
         self.summary_panel = summary
 
@@ -77,7 +80,7 @@ class EnhancedMainWindow(MainWindow):
             if not self.events:
                 self.summary_text.setText("暂无操作，可以录制新宏或打开编辑器手动创建")
             else:
-                self.summary_text.setText(f"共 {len(self.events)} 个操作，双击“打开宏编辑器”进行详细编辑和安全预览")
+                self.summary_text.setText(f"共 {len(self.events)} 个操作，打开宏编辑器可详细编辑和安全预览")
 
     def _build_countdown_overlay(self):
         root = self.centralWidget()
@@ -94,7 +97,6 @@ class EnhancedMainWindow(MainWindow):
         overlay_layout = QVBoxLayout(self.countdown_overlay)
         overlay_layout.setContentsMargins(20, 18, 20, 18)
         overlay_layout.setSpacing(4)
-
         title = QLabel("准备录制")
         title.setObjectName("countdownTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -162,11 +164,54 @@ class EnhancedMainWindow(MainWindow):
         super().stop_all()
         self.countdown_overlay.hide()
 
+    def play(self):
+        """播放前隐藏自身并短暂等待，让目标窗口获得前台焦点。"""
+        if self.recorder.recording:
+            self.stop_recording()
+        if not self.events:
+            self.status.setText("没有可播放的操作，请先录制或加载宏。")
+            return
+        if self.player.running or self._play_prepare_timer.isActive():
+            return
+
+        self._play_prepare_events = list(self.events)
+        self._play_prepare_repeat = self.repeat.value()
+        self.status.setText("准备播放：已隐藏宏录制器，目标窗口即将接管操作")
+        self._refresh()
+        self.hide()
+        self._play_prepare_timer.start(250)
+
+    def _start_prepared_playback(self):
+        events = self._play_prepare_events
+        repeat = self._play_prepare_repeat
+        self._play_prepare_events = None
+        if not events:
+            self.show()
+            return
+        if not self.player.play(events, repeat):
+            self.show()
+            self.status.setText("播放启动失败")
+            self._refresh()
+
+    def _on_state(self, state: str):
+        super()._on_state(state)
+        if state in {"播放完成", "已停止"} or state.startswith("播放异常："):
+            QTimer.singleShot(120, self._restore_after_playback)
+
+    def _restore_after_playback(self):
+        if self.player.running:
+            return
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self._refresh()
+
     def _begin_recording(self):
         self.countdown_overlay.hide()
         super()._begin_recording()
 
     def closeEvent(self, event):
+        self._play_prepare_timer.stop()
         if hasattr(self, "countdown_overlay"):
             self.countdown_overlay.hide()
         super().closeEvent(event)
