@@ -1,0 +1,5 @@
+pip install pyinstaller
+
+pyinstaller main.py
+
+pyinstaller -y main.spec
