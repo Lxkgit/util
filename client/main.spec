@@ -10,7 +10,7 @@ def collect_vlc_runtime():
     vlc_dir_value = os.environ.get("VLC_DIR")
     if not vlc_dir_value:
         raise EnvironmentError(
-            "VLC_DIR is not set. Run build.ps1 to download and prepare the VLC runtime."
+            "未设置 VLC_DIR。请先运行 build.ps1 下载并准备 VLC 运行库。"
         )
 
     vlc_root = Path(vlc_dir_value)
@@ -20,17 +20,17 @@ def collect_vlc_runtime():
         and (vlc_root / "plugins").is_dir()
     ):
         raise FileNotFoundError(
-            "The VLC runtime directory is incomplete: " + str(vlc_root)
+            "VLC 运行库目录不完整：" + str(vlc_root)
         )
 
     binaries = []
     datas = []
 
-    # Collect VLC core DLL files
+    # 收集 VLC 核心 DLL 文件
     for file in vlc_root.glob("*.dll"):
         binaries.append((str(file), "vlc"))
 
-    # Collect VLC plugins and their resource files
+    # 收集 VLC 插件及其资源文件
     plugins_dir = vlc_root / "plugins"
     for file in plugins_dir.rglob("*"):
         if not file.is_file():
@@ -48,7 +48,7 @@ def collect_vlc_runtime():
     return binaries, datas
 
 
-# Collect PySide6 and third-party dependencies
+# 收集 PySide6 及第三方依赖
 pyside6_datas, pyside6_binaries, pyside6_hiddenimports = collect_all("PySide6")
 aiortc_datas, aiortc_binaries, aiortc_hiddenimports = collect_all("aiortc")
 av_datas, av_binaries, av_hiddenimports = collect_all("av")
