@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt, QRect, QSize, QPoint
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QTabBar, QWidget, QVBoxLayout, QPushButton,
-    QMenu, QScrollArea, QLayout
+    QMenu, QScrollArea, QLayout, QMessageBox
 )
 
 from features.file_manager import FileManager
@@ -104,6 +104,9 @@ class MainWindow(QMainWindow):
         self.resize(1130, 640)
 
         self.remote_runtime = RemoteWorker(self)
+        self.remote_runtime.incoming_connection.connect(
+            self.handle_incoming_connection
+        )
         self.remote_runtime.start()
 
         self.tabs = QTabWidget()
@@ -161,6 +164,21 @@ class MainWindow(QMainWindow):
 
         self.tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(self.tab_right_click)
+
+    def handle_incoming_connection(self, peer_key, _):
+        answer = QMessageBox.question(
+            self,
+            "远程连接请求",
+            f"设备 Key：{peer_key}\n\n"
+            "该设备请求连接本机。允许后，对方可以在本次连接中"
+            "请求本机已安装软件列表和屏幕截图。是否允许？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        self.remote_runtime.approve_connection(
+            peer_key,
+            answer == QMessageBox.Yes
+        )
 
     def add_home_card(self, title: str, key: str):
         btn = QPushButton(title)

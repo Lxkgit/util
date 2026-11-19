@@ -1,3 +1,5 @@
+建议使用 Python 3.10 或更高版本。
+
 安装远程操控模块依赖：
 
 pip install -r requirements-remote.txt
@@ -6,10 +8,12 @@ pip install -r requirements-remote.txt
 
 pip install pyinstaller
 
-打包：
+开发运行：
 
-pyinstaller main.py
+python main.py
 
-或使用项目 spec 文件：
+使用项目 spec 文件打包：
 
 pyinstaller -y main.spec
+
+aiortc / PyAV 包含原生二进制依赖，首次打包后需要在未安装 Python 的 Windows 10/11 测试机上验证。

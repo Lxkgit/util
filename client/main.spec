@@ -1,12 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_all
+
+aiortc_datas, aiortc_binaries, aiortc_hiddenimports = collect_all('aiortc')
+av_datas, av_binaries, av_hiddenimports = collect_all('av')
+mss_datas, mss_binaries, mss_hiddenimports = collect_all('mss')
+pillow_datas, pillow_binaries, pillow_hiddenimports = collect_all('PIL')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=[],
+    binaries=(
+        aiortc_binaries + av_binaries + mss_binaries + pillow_binaries
+    ),
+    datas=(
+        aiortc_datas + av_datas + mss_datas + pillow_datas
+    ),
+    hiddenimports=(
+        aiortc_hiddenimports + av_hiddenimports
+        + mss_hiddenimports + pillow_hiddenimports
+    ),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
