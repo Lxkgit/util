@@ -2,6 +2,10 @@
 
 from PyInstaller.utils.hooks import collect_all
 
+# 收集 PySide6 和 Qt 运行时依赖
+pyside6_datas, pyside6_binaries, pyside6_hiddenimports = collect_all('PySide6')
+
+# 收集远程操控依赖
 aiortc_datas, aiortc_binaries, aiortc_hiddenimports = collect_all('aiortc')
 av_datas, av_binaries, av_hiddenimports = collect_all('av')
 mss_datas, mss_binaries, mss_hiddenimports = collect_all('mss')
@@ -11,14 +15,25 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=(
-        aiortc_binaries + av_binaries + mss_binaries + pillow_binaries
+        pyside6_binaries
+        + aiortc_binaries
+        + av_binaries
+        + mss_binaries
+        + pillow_binaries
     ),
     datas=(
-        aiortc_datas + av_datas + mss_datas + pillow_datas
+        pyside6_datas
+        + aiortc_datas
+        + av_datas
+        + mss_datas
+        + pillow_datas
     ),
     hiddenimports=(
-        aiortc_hiddenimports + av_hiddenimports
-        + mss_hiddenimports + pillow_hiddenimports
+        pyside6_hiddenimports
+        + aiortc_hiddenimports
+        + av_hiddenimports
+        + mss_hiddenimports
+        + pillow_hiddenimports
     ),
     hookspath=[],
     hooksconfig={},
@@ -27,6 +42,7 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -38,7 +54,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -46,12 +62,13 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='main',
 )
