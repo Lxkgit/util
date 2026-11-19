@@ -1,19 +1,25 @@
-建议使用 Python 3.10 或更高版本。
+Windows 客户端打包
 
-安装远程操控模块依赖：
+推荐环境：
+- Windows 10/11 x64
+- Python 3.11 x64
+- 64 位 VLC（脚本可通过 winget 提示安装）
 
-pip install -r requirements-remote.txt
+自动打包：
+1. 在 PowerShell 中进入 client 目录。
+2. 执行：
+   powershell -ExecutionPolicy Bypass -File .\build.ps1
+3. 首次执行会创建 .venv，自动安装 requirements.txt 中缺少的依赖。
+4. 检查 VLC 运行库；未安装时可选择通过 winget 安装。
+5. 自动清理旧构建并执行 main.spec。
 
-安装 PyInstaller：
+打包结果：
+dist\main\main.exe
 
-pip install pyinstaller
-
-开发运行：
-
-python main.py
-
-使用项目 spec 文件打包：
-
-pyinstaller -y main.spec
-
-aiortc / PyAV 包含原生二进制依赖，首次打包后需要在未安装 Python 的 Windows 10/11 测试机上验证。
+注意：
+- 必须复制整个 dist\main 文件夹，不能只复制 main.exe。
+- VLC 的 libvlc.dll、libvlccore.dll 和 plugins 会一并打包。
+- 当前打包方式为 onedir，不是单文件 exe。
+- aiortc / PyAV 包含原生二进制依赖，仍需在未安装 Python 的 Windows 10/11 测试机上验证。
+- 如果 VLC 安装在自定义目录，可先设置：
+  $env:VLC_DIR = "D:\路径\VideoLAN\VLC"
