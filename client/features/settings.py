@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QLineEdit, QFileDialog,
-    QScrollArea, QHBoxLayout, QFrame, QPushButton
+    QScrollArea, QHBoxLayout, QFrame, QPushButton, QCheckBox
 )
 
 CONFIG_PATH = "config.ini"
@@ -15,7 +15,10 @@ CONFIG_PATH = "config.ini"
 def load_config():
     config = configparser.ConfigParser()
     if not os.path.exists(CONFIG_PATH):
-        config["DEFAULT"] = {"HomeDir": str(Path.home())}
+        config["DEFAULT"] = {
+            "HomeDir": str(Path.home()),
+            "RemoteEnabled": "true"
+        }
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             config.write(f)
     else:
@@ -48,20 +51,17 @@ class PathSettingCard(QFrame):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
 
-        # 左侧：标题文字，靠右对齐
         self.label = QLabel(title)
         self.label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.label.setFixedWidth(110)
-        self.label.setStyleSheet("border: none;")  # 去掉边框
+        self.label.setStyleSheet("border: none;")
         layout.addWidget(self.label, stretch=1)
 
-        # 中间：路径显示
         self.path_edit = QLineEdit()
         self.path_edit.setText(value)
         self.path_edit.setReadOnly(True)
         layout.addWidget(self.path_edit, stretch=3)
 
-        # 右侧：小按钮
         self.select_btn = QPushButton("选择目录")
         self.select_btn.setMinimumWidth(70)
         self.select_btn.clicked.connect(self.browse_dir)
@@ -102,7 +102,6 @@ class Settings(QWidget):
         scroll.setWidget(container)
         main_layout.addWidget(scroll)
 
-        # -------------------- 添加卡片 --------------------
         config = load_config()
         home_dir = config["DEFAULT"].get("HomeDir", str(Path.home()))
         file_card = PathSettingCard(
@@ -110,8 +109,23 @@ class Settings(QWidget):
         )
         self.cards_layout.addWidget(file_card)
 
-        # 未来可以继续添加其他设置卡片
-        # example_card = SettingCard("🔔 通知设置", value="开启", config_key="Notify")
-        # self.cards_layout.addWidget(example_card)
+        remote_enabled = config["DEFAULT"].getboolean(
+            "RemoteEnabled", fallback=True
+        )
+        self.remote_enabled = QCheckBox("允许本机被发现（注册设备并持续发送心跳）")
+        self.remote_enabled.setChecked(remote_enabled)
+        self.remote_enabled.stateChanged.connect(self.save_remote_enabled)
+        self.cards_layout.addWidget(self.remote_enabled)
+
+        remote_tip = QLabel(
+            "关闭后客户端停止发送心跳，服务端设备记录会在 TTL 到期后自动清理；"
+            "本机仍可查询其他在线设备。"
+        )
+        remote_tip.setWordWrap(True)
+        remote_tip.setStyleSheet("color: #777;")
+        self.cards_layout.addWidget(remote_tip)
 
         self.cards_layout.addStretch()
+
+    def save_remote_enabled(self, state):
+        save_config("RemoteEnabled", "true" if state == Qt.Checked else "false")

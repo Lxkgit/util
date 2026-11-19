@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (
 from features.file_manager import FileManager
 from features.settings import Settings
 from features.video_page import VideoPage
+from features.remote_control import RemoteControl
+from remote.runtime import RemoteWorker
 
 
 # -------------------- FlowLayout --------------------
@@ -47,7 +49,6 @@ class FlowLayout(QLayout):
         return self.minimumSize()
 
     def minimumSize(self):
-        # 返回当前布局实际占用的最小尺寸
         width = 0
         height = self.doLayout(QRect(0, 0, 0, 0), testOnly=True)
         return QSize(width, height)
@@ -65,11 +66,9 @@ class FlowLayout(QLayout):
             if not widget.isVisible():
                 continue
 
-            # 使用实际大小
             w = widget.width() if widget.width() > 0 else widget.sizeHint().width()
             h = widget.height() if widget.height() > 0 else widget.sizeHint().height()
 
-            # 换行
             if x + w > left + max_width:
                 x = left
                 y += lineHeight + spacing
@@ -92,7 +91,8 @@ class FlowLayout(QLayout):
 FEATURE_REGISTRY = {
     "file_manager": FileManager,
     "settings": Settings,
-    "video_page": VideoPage
+    "video_page": VideoPage,
+    "remote_control": RemoteControl
 }
 
 
@@ -103,6 +103,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("客户端主界面")
         self.resize(1130, 640)
 
+        self.remote_runtime = RemoteWorker(self)
+        self.remote_runtime.start()
+
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
         self.tabs.setTabsClosable(True)
@@ -111,7 +114,7 @@ class MainWindow(QMainWindow):
         self.tabs.setStyleSheet("""
             QTabBar::tab {
                 height: 24px;
-                border: 1px solid #ccc;             
+                border: 1px solid #ccc;
                 padding: 4px 12px;
             }
             QTabBar::tab:selected {
@@ -128,7 +131,6 @@ class MainWindow(QMainWindow):
 
         self.opened_tabs = {}
 
-        # -------------------- 首页 --------------------
         self.home_widget = QWidget()
         self.home_layout = QVBoxLayout(self.home_widget)
         self.home_layout.setContentsMargins(20, 20, 20, 20)
@@ -149,19 +151,17 @@ class MainWindow(QMainWindow):
         self.home_layout.addWidget(scroll)
 
         self.tabs.addTab(self.home_widget, "首页")
-        self.tabs.tabBar().setTabButton(0, QTabBar.RightSide, None)  # 首页不可关闭
+        self.tabs.tabBar().setTabButton(0, QTabBar.RightSide, None)
 
-        # -------------------- 首页卡片 --------------------
         self.home_cards = []
         self.add_home_card("📁 文件管理", "file_manager")
         self.add_home_card("📹 监控视频", "video_page")
+        self.add_home_card("🖥️ 远程操控", "remote_control")
         self.add_home_card("⚙️ 设置", "settings")
 
-        # -------------------- 右键菜单 --------------------
         self.tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(self.tab_right_click)
 
-    # 添加首页卡片
     def add_home_card(self, title: str, key: str):
         btn = QPushButton(title)
         btn.setFixedSize(140, 100)
@@ -179,7 +179,6 @@ class MainWindow(QMainWindow):
         self.home_cards.append(btn)
         self.card_area_layout.addWidget(btn)
 
-    # 打开功能 tab
     def open_feature(self, key: str):
         if key in self.opened_tabs:
             self.tabs.setCurrentWidget(self.opened_tabs[key])
@@ -189,12 +188,15 @@ class MainWindow(QMainWindow):
         if not widget_cls:
             return
 
-        widget = widget_cls()
+        if key == "remote_control":
+            widget = widget_cls(self.remote_runtime)
+        else:
+            widget = widget_cls()
+
         index = self.tabs.addTab(widget, getattr(widget, "TITLE", key))
         self.tabs.setCurrentIndex(index)
         self.opened_tabs[key] = widget
 
-    # 关闭 tab
     def close_tab(self, index: int):
         if index == 0:
             return
@@ -204,11 +206,10 @@ class MainWindow(QMainWindow):
             self.tabs.removeTab(index)
             widget.deleteLater()
 
-        for k, v in list(self.opened_tabs.items()):
-            if v == widget:
-                del self.opened_tabs[k]
+        for key, value in list(self.opened_tabs.items()):
+            if value == widget:
+                del self.opened_tabs[key]
 
-    # 右键菜单
     def tab_right_click(self, pos):
         index = self.tabs.tabBar().tabAt(pos)
         if index <= 0:
@@ -220,13 +221,16 @@ class MainWindow(QMainWindow):
         menu.addAction("关闭右侧", lambda: self.close_right_tabs(index))
         menu.exec(self.tabs.tabBar().mapToGlobal(pos))
 
-    # 关闭其它 tab
     def close_other_tabs(self, index):
         for i in reversed(range(self.tabs.count())):
             if i != 0 and i != index:
                 self.close_tab(i)
 
-    # 关闭右侧 tab
     def close_right_tabs(self, index):
         for i in reversed(range(index + 1, self.tabs.count())):
             self.close_tab(i)
+
+    def closeEvent(self, event):
+        if self.remote_runtime.isRunning():
+            self.remote_runtime.stop()
+        super().closeEvent(event)

@@ -1,5 +1,15 @@
+安装远程操控模块依赖：
+
+pip install -r requirements-remote.txt
+
+安装 PyInstaller：
+
 pip install pyinstaller
 
+打包：
+
 pyinstaller main.py
+
+或使用项目 spec 文件：
 
 pyinstaller -y main.spec
