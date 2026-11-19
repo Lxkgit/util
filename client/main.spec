@@ -7,42 +7,30 @@ from PyInstaller.utils.hooks import collect_all
 
 
 def collect_vlc_runtime():
-    # 优先使用 VLC_DIR 指定的安装目录
-    candidates = []
-    if os.environ.get("VLC_DIR"):
-        candidates.append(Path(os.environ["VLC_DIR"]))
+    vlc_dir_value = os.environ.get("VLC_DIR")
+    if not vlc_dir_value:
+        raise EnvironmentError(
+            "VLC_DIR is not set. Run build.ps1 to download and prepare the VLC runtime."
+        )
 
-    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
-    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-    candidates.extend([
-        Path(program_files) / "VideoLAN" / "VLC",
-        Path(program_files_x86) / "VideoLAN" / "VLC",
-    ])
-
-    vlc_root = next(
-        (
-            path for path in candidates
-            if (path / "libvlc.dll").is_file()
-            and (path / "libvlccore.dll").is_file()
-            and (path / "plugins").is_dir()
-        ),
-        None,
-    )
-
-    if vlc_root is None:
+    vlc_root = Path(vlc_dir_value)
+    if not (
+        (vlc_root / "libvlc.dll").is_file()
+        and (vlc_root / "libvlccore.dll").is_file()
+        and (vlc_root / "plugins").is_dir()
+    ):
         raise FileNotFoundError(
-            "未找到 VLC 运行库。请先安装与 Python 位数一致的 VLC，"
-            "或设置环境变量 VLC_DIR 指向 VLC 安装目录。"
+            "The VLC runtime directory is incomplete: " + str(vlc_root)
         )
 
     binaries = []
     datas = []
 
-    # 收集 VLC 根目录 DLL
+    # Collect VLC core DLL files
     for file in vlc_root.glob("*.dll"):
         binaries.append((str(file), "vlc"))
 
-    # 收集 VLC 插件及其资源文件
+    # Collect VLC plugins and their resource files
     plugins_dir = vlc_root / "plugins"
     for file in plugins_dir.rglob("*"):
         if not file.is_file():
@@ -60,7 +48,7 @@ def collect_vlc_runtime():
     return binaries, datas
 
 
-# 收集 PySide6 和第三方依赖
+# Collect PySide6 and third-party dependencies
 pyside6_datas, pyside6_binaries, pyside6_hiddenimports = collect_all("PySide6")
 aiortc_datas, aiortc_binaries, aiortc_hiddenimports = collect_all("aiortc")
 av_datas, av_binaries, av_hiddenimports = collect_all("av")
