@@ -23,7 +23,7 @@ class PeerManager:
             self.RTCConfiguration = RTCConfiguration
             self.RTCIceServer = RTCIceServer
             self.aiortc_error = None
-        except ImportError as exc:
+        except Exception as exc:
             self.aiortc_error = exc
 
     def _new_peer(self, peer_key):
@@ -174,9 +174,22 @@ class PeerManager:
 
             state["data"].extend(message)
             if len(state["data"]) >= state["size"]:
-                image_data = bytes(state["data"][:state["size"]])
+                payload = bytes(state["data"][:state["size"]])
+                transfer_kind = state["kind"]
                 self.screenshot_buffers.pop(peer_key, None)
-                self.event_callback("screenshot_received", peer_key, image_data)
+
+                if transfer_kind == "screenshot":
+                    self.event_callback("screenshot_received", peer_key, payload)
+                elif transfer_kind == "software":
+                    try:
+                        software = json.loads(payload.decode("utf-8"))
+                        self.event_callback(
+                            "software_list_received", peer_key, software
+                        )
+                    except (UnicodeDecodeError, ValueError):
+                        self.event_callback(
+                            "peer_error", peer_key, "软件列表数据解析失败"
+                        )
             return
 
         try:
@@ -189,19 +202,15 @@ class PeerManager:
             await self._send_software_list(peer_key, channel, data)
         elif message_type == "capture_screen":
             await self._send_screenshot(peer_key, channel, data)
-        elif message_type == "software_list_result":
-            self.event_callback(
-                "software_list_received",
-                peer_key,
-                data.get("software", [])
-            )
-        elif message_type == "screenshot_begin":
+        elif message_type == "transfer_begin":
             try:
                 size = int(data.get("size", 0))
             except (TypeError, ValueError):
                 return
-            if 0 < size <= 20 * 1024 * 1024:
+            transfer_kind = data.get("kind")
+            if transfer_kind in ("screenshot", "software") and 0 < size <= 20 * 1024 * 1024:
                 self.screenshot_buffers[peer_key] = {
+                    "kind": transfer_kind,
                     "size": size,
                     "data": bytearray()
                 }
@@ -217,20 +226,22 @@ class PeerManager:
             from remote.software_manager import get_installed_software
 
             software = await asyncio.to_thread(get_installed_software)
-            response = {
-                "type": "software_list_result",
-                "requestId": request.get("requestId"),
-                "software": software
-            }
+            payload = json.dumps(
+                software, ensure_ascii=False
+            ).encode("utf-8")
         except Exception as exc:
-            response = {
-                "type": "operation_error",
-                "requestId": request.get("requestId"),
-                "message": f"读取软件列表失败：{exc}"
-            }
+            if channel.readyState == "open":
+                channel.send(json.dumps({
+                    "type": "operation_error",
+                    "requestId": request.get("requestId"),
+                    "message": f"读取软件列表失败：{exc}"
+                }, ensure_ascii=False))
+            return
 
-        if channel.readyState == "open":
-            channel.send(json.dumps(response, ensure_ascii=False))
+        await self._send_binary_payload(
+            channel, "software", payload, "application/json",
+            request.get("requestId")
+        )
 
     async def _send_screenshot(self, peer_key, channel, request):
         try:
@@ -243,17 +254,10 @@ class PeerManager:
             if channel.readyState != "open":
                 return
 
-            channel.send(json.dumps({
-                "type": "screenshot_begin",
-                "requestId": request.get("requestId"),
-                "mime": "image/jpeg",
-                "size": len(image_data)
-            }))
-            chunk_size = 16 * 1024
-            for offset in range(0, len(image_data), chunk_size):
-                if channel.readyState != "open":
-                    break
-                channel.send(image_data[offset:offset + chunk_size])
+            await self._send_binary_payload(
+                channel, "screenshot", image_data, "image/jpeg",
+                request.get("requestId")
+            )
         except Exception as exc:
             if channel.readyState == "open":
                 channel.send(json.dumps({
@@ -261,6 +265,27 @@ class PeerManager:
                     "requestId": request.get("requestId"),
                     "message": f"远程截图失败：{exc}"
                 }, ensure_ascii=False))
+
+    async def _send_binary_payload(
+        self, channel, transfer_kind, payload, mime_type, request_id
+    ):
+        if len(payload) > 20 * 1024 * 1024:
+            raise ValueError("传输数据超过 20 MB 限制")
+        if channel.readyState != "open":
+            return
+
+        channel.send(json.dumps({
+            "type": "transfer_begin",
+            "kind": transfer_kind,
+            "requestId": request_id,
+            "mime": mime_type,
+            "size": len(payload)
+        }))
+        chunk_size = 16 * 1024
+        for offset in range(0, len(payload), chunk_size):
+            if channel.readyState != "open":
+                break
+            channel.send(payload[offset:offset + chunk_size])
 
     async def close(self, peer_key):
         pc = self.peers.pop(peer_key, None)
