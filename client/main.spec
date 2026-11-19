@@ -12,8 +12,8 @@ def collect_vlc_runtime():
     if os.environ.get("VLC_DIR"):
         candidates.append(Path(os.environ["VLC_DIR"]))
 
-    program_files = os.environ.get("ProgramFiles", r"C:\\Program Files")
-    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)")
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
     candidates.extend([
         Path(program_files) / "VideoLAN" / "VLC",
         Path(program_files_x86) / "VideoLAN" / "VLC",
