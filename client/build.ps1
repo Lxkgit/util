@@ -17,7 +17,11 @@ if ($PythonVersion -notmatch "^Python 3\.11\.") {
     throw "Expected Python 3.11 x64, found: $PythonVersion"
 }
 
-$PythonBits = (& python -c 'import struct; print(struct.calcsize("P") * 8)').Trim()
+$PythonBitsOutput = & python -c 'import struct; print(struct.calcsize(chr(80)) * 8)' 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to detect Python architecture: $PythonBitsOutput"
+}
+$PythonBits = ($PythonBitsOutput | Out-String).Trim()
 if ($PythonBits -ne "64") {
     throw "Expected 64-bit Python, found $PythonBits-bit Python."
 }
