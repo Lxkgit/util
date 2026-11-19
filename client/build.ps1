@@ -1,56 +1,56 @@
-# Windows client dependency check and packaging script
+﻿# Windows 客户端依赖检查与自动打包脚本
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Client dependency check and packaging" -ForegroundColor Cyan
+Write-Host "客户端依赖检查与自动打包" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-# Check the Python interpreter
+# 检查 Python 环境
 $PythonCommand = Get-Command python -ErrorAction SilentlyContinue
 if (-not $PythonCommand) {
-    throw "Python was not found. Install Python 3.11 x64 and add it to PATH."
+    throw "未找到 Python。请安装 Python 3.11 64 位版本，并将其添加到 PATH。"
 }
 
 $PythonVersion = (& python --version 2>&1 | Out-String).Trim()
 if ($PythonVersion -notmatch "^Python 3\.11\.") {
-    throw "Expected Python 3.11 x64, found: $PythonVersion"
+    throw "要求使用 Python 3.11 64 位版本，当前检测结果：$PythonVersion"
 }
 
 $PythonBitsOutput = & python -c 'import struct; print(struct.calcsize(chr(80)) * 8)' 2>&1
 if ($LASTEXITCODE -ne 0) {
-    throw "Failed to detect Python architecture: $PythonBitsOutput"
+    throw "检测 Python 位数失败：$PythonBitsOutput"
 }
 $PythonBits = ($PythonBitsOutput | Out-String).Trim()
 if ($PythonBits -ne "64") {
-    throw "Expected 64-bit Python, found $PythonBits-bit Python."
+    throw "要求使用 64 位 Python，当前检测到 $PythonBits 位。"
 }
 
-# Create a project virtual environment if it does not exist
+# 如果项目虚拟环境不存在，则自动创建
 $VenvDir = Join-Path $PSScriptRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 
 if (-not (Test-Path $VenvPython)) {
-    Write-Host "Creating virtual environment..."
+    Write-Host "正在创建项目虚拟环境..."
     & python -m venv $VenvDir
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to create the virtual environment."
+        throw "创建 Python 虚拟环境失败。"
     }
 }
 
-# Install or repair all declared Python dependencies
-Write-Host "Installing/checking Python dependencies..."
+# 安装或补齐项目依赖
+Write-Host "正在检查并安装 Python 依赖..."
 & $VenvPython -m pip install --upgrade pip
 if ($LASTEXITCODE -ne 0) {
-    throw "Failed to upgrade pip."
+    throw "升级 pip 失败。"
 }
 
 & $VenvPython -m pip install -r (Join-Path $PSScriptRoot "requirements.txt")
 if ($LASTEXITCODE -ne 0) {
-    throw "Failed to install Python dependencies."
+    throw "安装 Python 项目依赖失败。"
 }
 
-# Download the official portable VLC package without installing VLC
+# 下载 VLC 官方便携版运行库，不需要在电脑上安装 VLC
 $VlcVersion = "3.0.24"
 $VlcFileName = "vlc-$VlcVersion-win64.zip"
 $VlcBaseUrl = "https://download.videolan.org/pub/videolan/vlc/last/win64"
@@ -66,24 +66,24 @@ $VlcDownloadUrl = "$VlcBaseUrl/$VlcFileName"
 $VlcChecksumUrl = "$VlcDownloadUrl.sha256"
 
 if (-not (Test-Path $VlcArchive)) {
-    Write-Host "Downloading official VLC $VlcVersion portable package..."
+    Write-Host "正在从 VideoLAN 官方站点下载 VLC $VlcVersion 便携版..."
     Invoke-WebRequest -Uri $VlcDownloadUrl -OutFile $VlcArchive -UseBasicParsing
 }
 
 if (-not (Test-Path $VlcChecksumFile)) {
-    Write-Host "Downloading VLC SHA256 checksum..."
+    Write-Host "正在下载 VLC SHA256 校验文件..."
     Invoke-WebRequest -Uri $VlcChecksumUrl -OutFile $VlcChecksumFile -UseBasicParsing
 }
 
 $ExpectedHash = ([regex]::Match((Get-Content -Raw $VlcChecksumFile), "^[0-9a-fA-F]{64}")).Value.ToLowerInvariant()
 if (-not $ExpectedHash) {
-    throw "Could not read the official VLC SHA256 checksum."
+    throw "无法读取 VLC 官方 SHA256 校验值。"
 }
 
 $ActualHash = (Get-FileHash -Path $VlcArchive -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($ActualHash -ne $ExpectedHash) {
     Remove-Item -Force $VlcArchive, $VlcChecksumFile -ErrorAction SilentlyContinue
-    throw "VLC archive SHA256 verification failed. The invalid download was removed; run the script again."
+    throw "VLC 压缩包 SHA256 校验失败，已删除损坏文件，请重新运行脚本。"
 }
 
 $VlcDll = $null
@@ -92,7 +92,7 @@ if (Test-Path $VlcExtractDir) {
 }
 
 if (-not $VlcDll) {
-    Write-Host "Extracting VLC runtime..."
+    Write-Host "正在解压 VLC 运行库..."
     Remove-Item -Recurse -Force $VlcExtractDir -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $VlcExtractDir | Out-Null
     Expand-Archive -Path $VlcArchive -DestinationPath $VlcExtractDir -Force
@@ -100,44 +100,44 @@ if (-not $VlcDll) {
 }
 
 if (-not $VlcDll) {
-    throw "The downloaded VLC package does not contain libvlc.dll."
+    throw "下载的 VLC 压缩包中没有找到 libvlc.dll。"
 }
 
 $VlcDir = $VlcDll.Directory.FullName
 if (-not (Test-Path (Join-Path $VlcDir "libvlccore.dll")) -or
     -not (Test-Path (Join-Path $VlcDir "plugins"))) {
-    throw "The extracted VLC runtime is incomplete: $VlcDir"
+    throw "VLC 运行库文件不完整：$VlcDir"
 }
 
 $env:VLC_DIR = $VlcDir
 $env:VLC_PLUGIN_PATH = Join-Path $VlcDir "plugins"
 $env:PATH = "$VlcDir;$env:PATH"
-Write-Host "VLC runtime ready: $VlcDir" -ForegroundColor Green
+Write-Host "VLC 运行库准备完成：$VlcDir" -ForegroundColor Green
 
-# Verify imports before building
-Write-Host "Verifying Python modules..."
-& $VenvPython -c 'import PySide6, cv2, vlc, requests, aiortc, av, mss, PIL; print("All required modules imported successfully.")'
+# 打包前检查 Python 模块是否可以正常导入
+Write-Host "正在检查 Python 模块..."
+& $VenvPython -c 'import PySide6, cv2, vlc, requests, aiortc, av, mss, PIL; print("所有必需模块均已成功导入。")'
 if ($LASTEXITCODE -ne 0) {
-    throw "Python module verification failed."
+    throw "Python 模块检查失败，请检查上方错误信息。"
 }
 
-# Remove old output and build with the project spec
-Write-Host "Removing previous build output..."
+# 清理旧的打包结果并执行 PyInstaller
+Write-Host "正在清理上一次的构建文件..."
 Remove-Item -Recurse -Force (Join-Path $PSScriptRoot "build"), (Join-Path $PSScriptRoot "dist") -ErrorAction SilentlyContinue
 
-Write-Host "Building application..."
+Write-Host "正在执行程序打包，请稍候..."
 & $VenvPython -m PyInstaller --noconfirm --clean main.spec
 if ($LASTEXITCODE -ne 0) {
-    throw "PyInstaller build failed."
+    throw "PyInstaller 打包失败，请检查上方错误信息。"
 }
 
 $ExePath = Join-Path $PSScriptRoot "dist\main\main.exe"
 if (-not (Test-Path $ExePath)) {
-    throw "Build finished but executable was not found: $ExePath"
+    throw "打包命令已结束，但没有找到程序文件：$ExePath"
 }
 
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "Build completed: $ExePath" -ForegroundColor Green
-Write-Host "Copy the entire dist\main folder to the target computer." -ForegroundColor Yellow
-Write-Host "Do not copy main.exe alone." -ForegroundColor Yellow
+Write-Host "打包完成：$ExePath" -ForegroundColor Green
+Write-Host "请将整个 dist\main 文件夹复制到目标电脑。" -ForegroundColor Yellow
+Write-Host "不能只复制 main.exe。" -ForegroundColor Yellow
 Write-Host "========================================" -ForegroundColor Green
