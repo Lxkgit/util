@@ -1,0 +1,13 @@
+# 桌面客户端完整依赖
+PySide6>=6.8,<7
+opencv-python>=4.10,<5
+python-vlc>=3.0.21203,<4
+
+# 远程操控
+requests>=2.32,<3
+aiortc>=1.13,<2
+mss>=10,<11
+Pillow>=11,<13
+
+# 打包
+PyInstaller>=6.10,<7
