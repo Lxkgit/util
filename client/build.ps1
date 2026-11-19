@@ -50,66 +50,69 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to install Python dependencies."
 }
 
-# Locate the 64-bit VLC installation
-$VlcCandidates = @()
-if ($env:VLC_DIR) {
-    $VlcCandidates += $env:VLC_DIR
-}
-if ($env:ProgramFiles) {
-    $VlcCandidates += (Join-Path $env:ProgramFiles "VideoLAN\VLC")
-}
-$ProgramFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
-if ($ProgramFilesX86) {
-    $VlcCandidates += (Join-Path $ProgramFilesX86 "VideoLAN\VLC")
-}
+# Download the official portable VLC package without installing VLC
+$VlcVersion = "3.0.24"
+$VlcFileName = "vlc-$VlcVersion-win64.zip"
+$VlcBaseUrl = "https://download.videolan.org/pub/videolan/vlc/last/win64"
+$VlcCacheDir = Join-Path $PSScriptRoot ".build-cache\vlc-$VlcVersion"
+$VlcArchive = Join-Path $VlcCacheDir $VlcFileName
+$VlcChecksumFile = Join-Path $VlcCacheDir "$VlcFileName.sha256"
+$VlcExtractDir = Join-Path $VlcCacheDir "extracted"
 
-$VlcDir = $null
-foreach ($Candidate in $VlcCandidates) {
-    if ((Test-Path (Join-Path $Candidate "libvlc.dll")) -and
-        (Test-Path (Join-Path $Candidate "libvlccore.dll")) -and
-        (Test-Path (Join-Path $Candidate "plugins"))) {
-        $VlcDir = (Resolve-Path $Candidate).Path
-        break
-    }
+New-Item -ItemType Directory -Force -Path $VlcCacheDir | Out-Null
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$VlcDownloadUrl = "$VlcBaseUrl/$VlcFileName"
+$VlcChecksumUrl = "$VlcDownloadUrl.sha256"
+
+if (-not (Test-Path $VlcArchive)) {
+    Write-Host "Downloading official VLC $VlcVersion portable package..."
+    Invoke-WebRequest -Uri $VlcDownloadUrl -OutFile $VlcArchive -UseBasicParsing
 }
 
-# Offer to install VLC with winget if it is missing
-if (-not $VlcDir) {
-    $Winget = Get-Command winget -ErrorAction SilentlyContinue
-    if ($Winget) {
-        $Answer = Read-Host "VLC was not found. Install 64-bit VLC using winget? (Y/N)"
-        if ($Answer -match "^(Y|YES)$") {
-            & winget install --id VideoLAN.VLC --exact --silent --accept-package-agreements --accept-source-agreements
-            if ($LASTEXITCODE -ne 0) {
-                throw "VLC installation failed. Install 64-bit VLC manually and run this script again."
-            }
-
-            $VlcCandidates = @()
-            if ($env:ProgramFiles) {
-                $VlcCandidates += (Join-Path $env:ProgramFiles "VideoLAN\VLC")
-            }
-            if ($ProgramFilesX86) {
-                $VlcCandidates += (Join-Path $ProgramFilesX86 "VideoLAN\VLC")
-            }
-
-            foreach ($Candidate in $VlcCandidates) {
-                if ((Test-Path (Join-Path $Candidate "libvlc.dll")) -and
-                    (Test-Path (Join-Path $Candidate "libvlccore.dll")) -and
-                    (Test-Path (Join-Path $Candidate "plugins"))) {
-                    $VlcDir = (Resolve-Path $Candidate).Path
-                    break
-                }
-            }
-        }
-    }
+if (-not (Test-Path $VlcChecksumFile)) {
+    Write-Host "Downloading VLC SHA256 checksum..."
+    Invoke-WebRequest -Uri $VlcChecksumUrl -OutFile $VlcChecksumFile -UseBasicParsing
 }
 
-if (-not $VlcDir) {
-    throw "VLC runtime was not found. Install 64-bit VLC or set VLC_DIR to its installation folder."
+$ExpectedHash = ([regex]::Match((Get-Content -Raw $VlcChecksumFile), "^[0-9a-fA-F]{64}")).Value.ToLowerInvariant()
+if (-not $ExpectedHash) {
+    throw "Could not read the official VLC SHA256 checksum."
+}
+
+$ActualHash = (Get-FileHash -Path $VlcArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($ActualHash -ne $ExpectedHash) {
+    Remove-Item -Force $VlcArchive, $VlcChecksumFile -ErrorAction SilentlyContinue
+    throw "VLC archive SHA256 verification failed. The invalid download was removed; run the script again."
+}
+
+$VlcDll = $null
+if (Test-Path $VlcExtractDir) {
+    $VlcDll = Get-ChildItem -Path $VlcExtractDir -Filter "libvlc.dll" -File -Recurse | Select-Object -First 1
+}
+
+if (-not $VlcDll) {
+    Write-Host "Extracting VLC runtime..."
+    Remove-Item -Recurse -Force $VlcExtractDir -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $VlcExtractDir | Out-Null
+    Expand-Archive -Path $VlcArchive -DestinationPath $VlcExtractDir -Force
+    $VlcDll = Get-ChildItem -Path $VlcExtractDir -Filter "libvlc.dll" -File -Recurse | Select-Object -First 1
+}
+
+if (-not $VlcDll) {
+    throw "The downloaded VLC package does not contain libvlc.dll."
+}
+
+$VlcDir = $VlcDll.Directory.FullName
+if (-not (Test-Path (Join-Path $VlcDir "libvlccore.dll")) -or
+    -not (Test-Path (Join-Path $VlcDir "plugins"))) {
+    throw "The extracted VLC runtime is incomplete: $VlcDir"
 }
 
 $env:VLC_DIR = $VlcDir
-Write-Host "VLC runtime: $VlcDir" -ForegroundColor Green
+$env:VLC_PLUGIN_PATH = Join-Path $VlcDir "plugins"
+$env:PATH = "$VlcDir;$env:PATH"
+Write-Host "VLC runtime ready: $VlcDir" -ForegroundColor Green
 
 # Verify imports before building
 Write-Host "Verifying Python modules..."
