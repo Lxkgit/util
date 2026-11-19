@@ -116,10 +116,11 @@ Write-Host "VLC 运行库准备完成：$VlcDir" -ForegroundColor Green
 
 # 打包前检查 Python 模块是否可以正常导入
 Write-Host "正在检查 Python 模块..."
-& $VenvPython -c 'import PySide6, cv2, vlc, requests, aiortc, av, mss, PIL; print("所有必需模块均已成功导入。")'
+& $VenvPython -c "import PySide6, cv2, vlc, requests, aiortc, av, mss, PIL"
 if ($LASTEXITCODE -ne 0) {
     throw "Python 模块检查失败，请检查上方错误信息。"
 }
+Write-Host "所有必需模块均已成功导入。" -ForegroundColor Green
 
 # 清理旧的打包结果并执行 PyInstaller
 Write-Host "正在清理上一次的构建文件..."
