@@ -44,7 +44,15 @@ class RemoteWorker(QThread):
 
     def _peer_event(self, event, peer_key, value):
         if event == "incoming_connection":
-            self.incoming_connection.emit(peer_key, str(value))
+            if self.device_manager.is_trusted(peer_key):
+                asyncio.create_task(
+                    self.peer_manager.approve_offer(peer_key, True)
+                )
+                self.status_updated.emit(
+                    f"已自动接受受信任设备的连接：{peer_key}"
+                )
+            else:
+                self.incoming_connection.emit(peer_key, str(value))
         elif event == "connection_state":
             self.connection_state.emit(peer_key, str(value))
         elif event == "software_list_received":
@@ -98,6 +106,8 @@ class RemoteWorker(QThread):
             if action == "connect":
                 await self.peer_manager.connect(peer_key)
             elif action == "approve":
+                if value:
+                    self.device_manager.trust_peer(peer_key)
                 await self.peer_manager.approve_offer(peer_key, value)
             elif action == "software":
                 await self.peer_manager.request_software(peer_key)
