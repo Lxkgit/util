@@ -5,7 +5,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QLineEdit, QFileDialog,
-    QScrollArea, QHBoxLayout, QFrame, QPushButton, QCheckBox
+    QScrollArea, QHBoxLayout, QFrame, QPushButton, QCheckBox,
+    QListWidget, QMessageBox
 )
 
 CONFIG_PATH = "config.ini"
@@ -85,8 +86,9 @@ class PathSettingCard(QFrame):
 class Settings(QWidget):
     TITLE = "⚙️ 设置"
 
-    def __init__(self):
+    def __init__(self, runtime=None):
         super().__init__()
+        self.runtime = runtime
         self.init_ui()
 
     def init_ui(self):
@@ -125,7 +127,43 @@ class Settings(QWidget):
         remote_tip.setStyleSheet("color: #777;")
         self.cards_layout.addWidget(remote_tip)
 
+        trusted_title = QLabel("已信任的远程设备")
+        self.cards_layout.addWidget(trusted_title)
+
+        self.trusted_list = QListWidget()
+        self.cards_layout.addWidget(self.trusted_list)
+
+        revoke_button = QPushButton("撤销选中设备的信任")
+        revoke_button.clicked.connect(self.revoke_trust)
+        self.cards_layout.addWidget(revoke_button)
+        self.refresh_trusted_devices()
+
         self.cards_layout.addStretch()
+
+    def refresh_trusted_devices(self):
+        self.trusted_list.clear()
+        if not self.runtime:
+            return
+        for peer_key in self.runtime.device_manager.trusted_peers():
+            self.trusted_list.addItem(peer_key)
+
+    def revoke_trust(self):
+        item = self.trusted_list.currentItem()
+        if not item or not self.runtime:
+            QMessageBox.information(self, "提示", "请先选择要撤销的设备")
+            return
+
+        peer_key = item.text()
+        answer = QMessageBox.question(
+            self,
+            "确认撤销",
+            f"确定撤销设备 {peer_key} 的信任吗？\n撤销后，该设备下次连接需要重新确认。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if answer == QMessageBox.Yes:
+            self.runtime.device_manager.untrust_peer(peer_key)
+            self.refresh_trusted_devices()
 
     def save_remote_enabled(self, state):
         save_config("RemoteEnabled", "true" if state == Qt.Checked else "false")
