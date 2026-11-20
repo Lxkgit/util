@@ -47,6 +47,30 @@ class PeerManager:
             if state in ("failed", "closed"):
                 self.channels.pop(peer_key, None)
 
+        @pc.on("iceconnectionstatechange")
+        def on_ice_connection_state_change():
+            self.event_callback(
+                "connection_state",
+                peer_key,
+                f"ICE：{pc.iceConnectionState}"
+            )
+
+        @pc.on("icegatheringstatechange")
+        def on_ice_gathering_state_change():
+            self.event_callback(
+                "connection_state",
+                peer_key,
+                f"ICE候选收集：{pc.iceGatheringState}"
+            )
+
+        @pc.on("signalingstatechange")
+        def on_signaling_state_change():
+            self.event_callback(
+                "connection_state",
+                peer_key,
+                f"信令状态：{pc.signalingState}"
+            )
+
         @pc.on("datachannel")
         def on_datachannel(channel):
             self._bind_channel(peer_key, channel)
@@ -122,6 +146,7 @@ class PeerManager:
                 type=payload.get("type", "answer")
             )
             await pc.setRemoteDescription(description)
+            self.event_callback("connection_state", peer_key, "已收到 Answer")
 
     async def approve_offer(self, peer_key, approved):
         pc = self.pending_offers.pop(peer_key, None)
