@@ -1,3 +1,4 @@
+import json
 import platform
 import socket
 import time
@@ -31,6 +32,43 @@ class DeviceManager:
     @staticmethod
     def set_enabled(enabled):
         save_config("RemoteEnabled", "true" if enabled else "false")
+
+    @staticmethod
+    def trusted_peers():
+        config = load_config()
+        raw_value = config["DEFAULT"].get("TrustedDevices", "[]")
+        try:
+            peers = json.loads(raw_value)
+        except (TypeError, ValueError):
+            return []
+        if not isinstance(peers, list):
+            return []
+        return list(dict.fromkeys(
+            str(peer).strip() for peer in peers if str(peer).strip()
+        ))
+
+    def is_trusted(self, peer_key):
+        return bool(peer_key and peer_key in self.trusted_peers())
+
+    def trust_peer(self, peer_key):
+        if not peer_key or peer_key == self.device_key:
+            return
+        peers = self.trusted_peers()
+        if peer_key not in peers:
+            peers.append(peer_key)
+            save_config(
+                "TrustedDevices",
+                json.dumps(peers, ensure_ascii=False)
+            )
+
+    def untrust_peer(self, peer_key):
+        peers = self.trusted_peers()
+        if peer_key in peers:
+            peers.remove(peer_key)
+            save_config(
+                "TrustedDevices",
+                json.dumps(peers, ensure_ascii=False)
+            )
 
     def add_signal(self, signal):
         now = int(time.time())
