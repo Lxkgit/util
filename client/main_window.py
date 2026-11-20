@@ -168,10 +168,11 @@ class MainWindow(QMainWindow):
     def handle_incoming_connection(self, peer_key, _):
         answer = QMessageBox.question(
             self,
-            "远程连接请求",
+            "首次设备授权",
             f"设备 Key：{peer_key}\n\n"
-            "该设备请求连接本机。允许后，对方可以在本次连接中"
-            "请求本机已安装软件列表和屏幕截图。是否允许？",
+            "该设备请求连接本机。允许后将保存为受信任设备，"
+            "以后该设备连接时不再询问。"
+            "本次连接仅开放软件列表和屏幕截图。是否信任并允许？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
@@ -207,6 +208,8 @@ class MainWindow(QMainWindow):
             return
 
         if key == "remote_control":
+            widget = widget_cls(self.remote_runtime)
+        elif key == "settings":
             widget = widget_cls(self.remote_runtime)
         else:
             widget = widget_cls()
