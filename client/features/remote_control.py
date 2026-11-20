@@ -170,7 +170,7 @@ class RemoteControl(QWidget):
         self.error_label.setText(message)
 
     def update_connection_state(self, peer_key, state):
-        if peer_key == self._selected_peer:
+        if peer_key == self._selected_peer or not self._selected_peer:
             self.status_label.setText(f"设备 {peer_key}：{state}")
 
     def update_software(self, peer_key, software):
